@@ -1,0 +1,31 @@
+# CodeAgent Default Configuration
+# Copy to ~/.codeagent/config.json and modify as needed.
+# This YAML file is for reference; the agent uses JSON format.
+
+# LLM Configuration
+llm:
+  provider: ollama
+  model: "qwen2.5-coder:7b-instruct-q4_K_M"
+  base_url: "http://localhost:11434"
+  temperature: 0.1
+  max_tokens: 4096
+  context_window: 32768
+  timeout: 120
+
+# Agent Behavior
+agent:
+  max_turns: 50
+  auto_approve_reads: true
+  auto_approve_searches: true
+  auto_approve_writes: false    # Require confirmation for file writes
+  auto_approve_bash: false      # Require confirmation for shell commands
+  safety_checks: true
+  verbose: false
+
+# Web/Internet Features
+web:
+  enabled: true                 # Set to false for fully offline mode
+  search_engine: duckduckgo
+  request_timeout: 15
+  max_results: 10
+  user_agent: "CodeAgent/1.0"

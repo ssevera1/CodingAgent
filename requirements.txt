@@ -1,0 +1,8 @@
+# CodeAgent Dependencies
+# No external dependencies required - uses Python standard library only!
+# Ollama communication uses urllib (stdlib)
+# All tools use standard library modules
+
+# Optional: for enhanced terminal experience (not required)
+# rich>=13.0.0
+# prompt-toolkit>=3.0.0
