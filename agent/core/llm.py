@@ -1,158 +1,107 @@
-"""LLM interface for Ollama-based models."""
+"""LLM client for communicating with Ollama or other providers."""
 
-import json
 import time
-import urllib.request
-import urllib.error
-from typing import Generator, Optional
-
+import requests
+from typing import Optional
 from agent.core.config import LLMConfig
 
 
-class OllamaError(Exception):
-    """Raised when Ollama API returns an error."""
-    pass
-
-
 class LLMClient:
-    """Client for interacting with Ollama LLM API."""
+    """Client for LLM API calls with retry logic and timeout handling."""
 
     def __init__(self, config: LLMConfig):
         self.config = config
         self.base_url = config.base_url.rstrip("/")
+        self.model = config.model
+        self.temperature = config.temperature
+        self.max_tokens = config.max_tokens
+        self.timeout = config.timeout
+        self.max_retries = 3
+        self.retry_delay = 1.0
 
-    def _request(self, endpoint: str, data: dict, stream: bool = False) -> dict:
-        url = f"{self.base_url}{endpoint}"
-        payload = json.dumps(data).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            resp = urllib.request.urlopen(req, timeout=self.config.timeout)
-            if stream:
-                return resp  # Return response object for streaming
-            return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.URLError as e:
-            raise OllamaError(
-                f"Cannot connect to Ollama at {self.base_url}. "
-                f"Make sure Ollama is running: {e}"
-            )
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise OllamaError(f"Ollama API error ({e.code}): {body}")
-
-    def check_health(self) -> bool:
-        """Check if Ollama is running and the model is available."""
-        try:
-            url = f"{self.base_url}/api/tags"
-            req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode("utf-8"))
-            models = [m["name"] for m in data.get("models", [])]
-            # Check if our model (or a prefix of it) is available
-            model_base = self.config.model.split(":")[0]
-            return any(model_base in m for m in models)
-        except Exception:
-            return False
-
-    def list_models(self) -> list[str]:
-        """List available models in Ollama."""
-        try:
-            url = f"{self.base_url}/api/tags"
-            req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode("utf-8"))
-            return [m["name"] for m in data.get("models", [])]
-        except Exception:
-            return []
-
-    def chat(
-        self,
-        messages: list[dict],
-        tools: Optional[list[dict]] = None,
-        stream: bool = False,
-    ) -> dict:
-        """Send a chat completion request to Ollama.
-
+    def complete(self, messages: list[dict], system_prompt: Optional[str] = None) -> str:
+        """Request a completion from the LLM with retry logic.
+        
         Args:
-            messages: List of message dicts with 'role' and 'content'.
-            tools: Optional list of tool definitions for function calling.
-            stream: Whether to stream the response.
-
+            messages: List of message dicts with 'role' and 'content'
+            system_prompt: Optional system message to prepend
+            
         Returns:
-            Response dict with 'message' containing 'role', 'content',
-            and optionally 'tool_calls'.
+            The assistant's response text
+            
+        Raises:
+            RuntimeError: If all retries fail or response is malformed
         """
-        data = {
-            "model": self.config.model,
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + messages
+
+        payload = {
+            "model": self.model,
             "messages": messages,
-            "stream": stream,
-            "options": {
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
-                "num_ctx": self.config.context_window,
-            },
-        }
-        if tools:
-            data["tools"] = tools
-
-        if stream:
-            return self._stream_chat(data)
-
-        result = self._request("/api/chat", data)
-        return result
-
-    def _stream_chat(self, data: dict) -> Generator[str, None, dict]:
-        """Stream chat response, yielding content chunks."""
-        resp = self._request("/api/chat", data, stream=True)
-        full_response = {"message": {"role": "assistant", "content": ""}}
-
-        for line in resp:
-            line = line.decode("utf-8").strip()
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line)
-                if "message" in chunk:
-                    content = chunk["message"].get("content", "")
-                    full_response["message"]["content"] += content
-                    yield content
-                    # Check for tool calls
-                    if "tool_calls" in chunk["message"]:
-                        full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
-                if chunk.get("done", False):
-                    break
-            except json.JSONDecodeError:
-                continue
-
-        return full_response
-
-    def generate(self, prompt: str) -> str:
-        """Simple text generation without chat format."""
-        data = {
-            "model": self.config.model,
-            "prompt": prompt,
+            "temperature": self.temperature,
             "stream": False,
-            "options": {
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
-            },
         }
-        result = self._request("/api/generate", data)
-        return result.get("response", "")
+        if self.max_tokens:
+            payload["num_predict"] = self.max_tokens
 
-    def pull_model(self, model_name: Optional[str] = None) -> bool:
-        """Pull/download a model from Ollama registry."""
-        model = model_name or self.config.model
-        print(f"Pulling model '{model}'... This may take a while.")
+        for attempt in range(self.max_retries):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/chat",
+                    json=payload,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if "message" not in data or "content" not in data["message"]:
+                    raise ValueError(f"Unexpected response schema: {data}")
+                
+                return data["message"]["content"]
+            except requests.exceptions.Timeout:
+                if attempt == self.max_retries - 1:
+                    raise RuntimeError(
+                        f"LLM request timeout after {self.max_retries} retries "
+                        f"(timeout={self.timeout}s, model={self.model})"
+                    )
+                time.sleep(self.retry_delay)
+            except requests.exceptions.ConnectionError:
+                if attempt == self.max_retries - 1:
+                    raise RuntimeError(
+                        f"Failed to connect to LLM at {self.base_url} "
+                        f"after {self.max_retries} retries. "
+                        f"Ensure Ollama is running: ollama serve"
+                    )
+                time.sleep(self.retry_delay)
+            except requests.exceptions.HTTPError as e:
+                if response.status_code == 404:
+                    raise RuntimeError(
+                        f"Model not found: {self.model}. "
+                        f"Pull it with: ollama pull {self.model}"
+                    )
+                if attempt == self.max_retries - 1:
+                    raise RuntimeError(
+                        f"LLM HTTP error {response.status_code}: {response.text}"
+                    )
+                time.sleep(self.retry_delay)
+            except (ValueError, requests.exceptions.RequestException) as e:
+                if attempt == self.max_retries - 1:
+                    raise RuntimeError(f"LLM request failed: {str(e)}")
+                time.sleep(self.retry_delay)
+
+        raise RuntimeError("LLM request failed: exhausted retries")
+
+    def health_check(self) -> bool:
+        """Check if LLM service is reachable and responsive.
+        
+        Returns:
+            True if healthy, False otherwise
+        """
         try:
-            data = {"name": model, "stream": False}
-            self._request("/api/pull", data)
-            print(f"Model '{model}' pulled successfully.")
-            return True
-        except OllamaError as e:
-            print(f"Failed to pull model: {e}")
+            response = requests.get(
+                f"{self.base_url}/api/tags",
+                timeout=5,
+            )
+            return response.status_code == 200
+        except requests.exceptions.RequestException:
             return False
