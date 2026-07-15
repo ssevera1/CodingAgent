@@ -1,158 +1,168 @@
-"""LLM interface for Ollama-based models."""
+"""LLM client for communicating with Ollama or other providers."""
 
-import json
+import os
 import time
-import urllib.request
-import urllib.error
-from typing import Generator, Optional
+import logging
+from typing import Optional
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from agent.core.config import LLMConfig
-
-
-class OllamaError(Exception):
-    """Raised when Ollama API returns an error."""
-    pass
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """Client for interacting with Ollama LLM API."""
+    """Client for LLM API calls with retry logic and error handling."""
 
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config):
         self.config = config
-        self.base_url = config.base_url.rstrip("/")
+        self.base_url = config.llm.base_url.rstrip("/")
+        self.model = config.llm.model
+        self.temperature = config.llm.temperature
+        self.max_tokens = config.llm.max_tokens
+        self.timeout = config.llm.timeout
+        self.session = self._create_session()
 
-    def _request(self, endpoint: str, data: dict, stream: bool = False) -> dict:
-        url = f"{self.base_url}{endpoint}"
-        payload = json.dumps(data).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+    def _create_session(self) -> requests.Session:
+        """Create a requests session with retry strategy."""
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"],
         )
-        try:
-            resp = urllib.request.urlopen(req, timeout=self.config.timeout)
-            if stream:
-                return resp  # Return response object for streaming
-            return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.URLError as e:
-            raise OllamaError(
-                f"Cannot connect to Ollama at {self.base_url}. "
-                f"Make sure Ollama is running: {e}"
-            )
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise OllamaError(f"Ollama API error ({e.code}): {body}")
-
-    def check_health(self) -> bool:
-        """Check if Ollama is running and the model is available."""
-        try:
-            url = f"{self.base_url}/api/tags"
-            req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode("utf-8"))
-            models = [m["name"] for m in data.get("models", [])]
-            # Check if our model (or a prefix of it) is available
-            model_base = self.config.model.split(":")[0]
-            return any(model_base in m for m in models)
-        except Exception:
-            return False
-
-    def list_models(self) -> list[str]:
-        """List available models in Ollama."""
-        try:
-            url = f"{self.base_url}/api/tags"
-            req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode("utf-8"))
-            return [m["name"] for m in data.get("models", [])]
-        except Exception:
-            return []
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
 
     def chat(
         self,
         messages: list[dict],
-        tools: Optional[list[dict]] = None,
-        stream: bool = False,
-    ) -> dict:
-        """Send a chat completion request to Ollama.
+        max_retries: int = 3,
+    ) -> Optional[str]:
+        """Send a chat request to the LLM.
 
         Args:
             messages: List of message dicts with 'role' and 'content'.
-            tools: Optional list of tool definitions for function calling.
-            stream: Whether to stream the response.
+            max_retries: Number of retries on transient failures.
 
         Returns:
-            Response dict with 'message' containing 'role', 'content',
-            and optionally 'tool_calls'.
+            The assistant's response content, or None if all retries failed.
         """
-        data = {
-            "model": self.config.model,
+        if not messages:
+            logger.warning("chat() called with empty messages")
+            return None
+
+        url = f"{self.base_url}/api/chat"
+        payload = {
+            "model": self.model,
             "messages": messages,
-            "stream": stream,
-            "options": {
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
-                "num_ctx": self.config.context_window,
-            },
-        }
-        if tools:
-            data["tools"] = tools
-
-        if stream:
-            return self._stream_chat(data)
-
-        result = self._request("/api/chat", data)
-        return result
-
-    def _stream_chat(self, data: dict) -> Generator[str, None, dict]:
-        """Stream chat response, yielding content chunks."""
-        resp = self._request("/api/chat", data, stream=True)
-        full_response = {"message": {"role": "assistant", "content": ""}}
-
-        for line in resp:
-            line = line.decode("utf-8").strip()
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line)
-                if "message" in chunk:
-                    content = chunk["message"].get("content", "")
-                    full_response["message"]["content"] += content
-                    yield content
-                    # Check for tool calls
-                    if "tool_calls" in chunk["message"]:
-                        full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
-                if chunk.get("done", False):
-                    break
-            except json.JSONDecodeError:
-                continue
-
-        return full_response
-
-    def generate(self, prompt: str) -> str:
-        """Simple text generation without chat format."""
-        data = {
-            "model": self.config.model,
-            "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": self.config.temperature,
-                "num_predict": self.config.max_tokens,
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
             },
         }
-        result = self._request("/api/generate", data)
-        return result.get("response", "")
 
-    def pull_model(self, model_name: Optional[str] = None) -> bool:
-        """Pull/download a model from Ollama registry."""
-        model = model_name or self.config.model
-        print(f"Pulling model '{model}'... This may take a while.")
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                logger.debug(
+                    f"LLM request (attempt {attempt + 1}/{max_retries}): "
+                    f"model={self.model}, messages={len(messages)}"
+                )
+                response = self.session.post(
+                    url,
+                    json=payload,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                if "message" not in data:
+                    logger.error(
+                        f"Unexpected LLM response structure: {list(data.keys())}"
+                    )
+                    return None
+
+                content = data["message"].get("content", "")
+                if not content:
+                    logger.warning("LLM returned empty response content")
+                    return None
+
+                logger.debug(f"LLM response received: {len(content)} chars")
+                return content
+
+            except requests.exceptions.Timeout as e:
+                last_error = e
+                logger.warning(
+                    f"LLM request timeout (attempt {attempt + 1}/{max_retries}): "
+                    f"{self.timeout}s"
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+                logger.warning(
+                    f"LLM connection failed (attempt {attempt + 1}/{max_retries}): "
+                    f"{self.base_url}"
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if e.response else None
+                logger.error(
+                    f"LLM HTTP error {status_code}: {e.response.text if e.response else str(e)}"
+                )
+                if status_code and status_code < 500:
+                    return None
+                last_error = e
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+
+            except ValueError as e:
+                logger.error(f"LLM response JSON decode error: {e}")
+                return None
+
+            except Exception as e:
+                logger.error(
+                    f"Unexpected LLM error on attempt {attempt + 1}/{max_retries}: {e}"
+                )
+                last_error = e
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+
+        logger.error(
+            f"LLM request failed after {max_retries} attempts: {last_error}"
+        )
+        return None
+
+    def health_check(self) -> bool:
+        """Check if the LLM service is reachable.
+
+        Returns:
+            True if reachable, False otherwise.
+        """
         try:
-            data = {"name": model, "stream": False}
-            self._request("/api/pull", data)
-            print(f"Model '{model}' pulled successfully.")
+            url = f"{self.base_url}/api/tags"
+            response = self.session.get(url, timeout=5)
+            response.raise_for_status()
+            logger.debug("LLM health check passed")
             return True
-        except OllamaError as e:
-            print(f"Failed to pull model: {e}")
+        except Exception as e:
+            logger.warning(f"LLM health check failed: {e}")
             return False
+
+    def close(self):
+        """Close the session."""
+        self.session.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
