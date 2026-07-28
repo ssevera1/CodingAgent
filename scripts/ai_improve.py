@@ -17,6 +17,8 @@ import anthropic
 # ── Context builder ──────────────────────────────────────────────────────────
 
 MAX_CONTEXT_CHARS = 20_000
+# Skip the run entirely once this many bot PRs are already awaiting review.
+MAX_OPEN_PRS = int(os.environ.get("MAX_OPEN_PRS", "5"))
 PRIORITY_DIRS = {"src", "tests", "test", "lib", "core", "scripts"}
 PRIORITY_EXTS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs"}
 READABLE_EXTS = PRIORITY_EXTS | {".yaml", ".yml", ".toml", ".sh", ".md", ".json"}
@@ -38,6 +40,23 @@ def sh(cmd: list[str]) -> str:
 def tracked_files() -> list[str]:
     out = sh(["git", "ls-files"])
     return [f for f in out.splitlines() if f]
+
+
+def open_bot_prs() -> list[str]:
+    """Titles of this bot's currently-open PRs, so it neither repeats nor piles up."""
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not repo:
+        return []
+    out = sh(["gh", "pr", "list", "-R", repo, "--state", "open",
+              "--limit", "100", "--json", "title,headRefName"])
+    if not out:
+        return []
+    try:
+        prs = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    return [p["title"] for p in prs
+            if str(p.get("headRefName", "")).startswith("improve/")]
 
 
 def default_branch() -> str:
@@ -102,7 +121,7 @@ PROMPT = """\
 You are a senior engineer doing a focused improvement pass on a codebase you know well.
 
 {context}
-
+{open_prs}
 Your task: implement ONE specific, realistic improvement that a thoughtful engineer \
 would make after actually running and using this code.
 
@@ -116,6 +135,8 @@ schema mismatch, race condition)
 - A retry or timeout that is missing on a network/IO call
 
 Constraints:
+- Do NOT propose anything already listed as an open pull request above; pick a \
+genuinely different area of the codebase
 - ONE file only: create or modify a single file
 - The file must be complete and runnable — no placeholders, no TODO stubs
 - No verbose explanatory comments; write as a competent engineer would
@@ -137,6 +158,20 @@ def run(cmd: list[str]) -> None:
 
 
 def main() -> None:
+    # Check the review queue before spending an API call on a run we'd discard.
+    pr_titles = open_bot_prs()
+    if len(pr_titles) >= MAX_OPEN_PRS:
+        print(f"{len(pr_titles)} improvement PRs already open "
+              f"(limit {MAX_OPEN_PRS}); skipping run.")
+        sys.exit(0)
+
+    if pr_titles:
+        open_prs = ("\n## Already proposed and awaiting review — do NOT repeat these\n"
+                    + "\n".join(f"- {t}" for t in pr_titles) + "\n")
+        print(f"{len(pr_titles)} open PR(s) fed back into context")
+    else:
+        open_prs = ""
+
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     print("Building context…")
@@ -147,7 +182,8 @@ def main() -> None:
     msg = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=4096,
-        messages=[{"role": "user", "content": PROMPT.format(context=context)}],
+        messages=[{"role": "user",
+                   "content": PROMPT.format(context=context, open_prs=open_prs)}],
     )
     raw = msg.content[0].text.strip()
 
