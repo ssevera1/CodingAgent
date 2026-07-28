@@ -161,19 +161,41 @@ def main() -> None:
         print(f"JSON parse error: {exc}\nRaw response:\n{raw[:800]}")
         sys.exit(0)  # Soft exit — skip this run rather than failing the workflow
 
-    file_path = Path(imp["file_path"])
+    raw_path: str = imp["file_path"]
     commit_msg: str = imp["commit_message"]
     pr_title: str = imp["pr_title"]
     pr_body: str = imp["pr_body"]
 
+    # Resolve the repo root and constrain all writes to within it.
+    root_out = sh(["git", "rev-parse", "--show-toplevel"])
+    if not root_out:
+        print("Cannot determine repo root; aborting.")
+        sys.exit(0)
+    repo_root = Path(root_out).resolve()
+
+    candidate = (repo_root / raw_path).resolve()
+
+    # Reject path traversal outside the repo.
+    if not str(candidate).startswith(str(repo_root) + os.sep):
+        print(f"Rejecting path outside repo root: {candidate}")
+        sys.exit(0)
+
+    # Reject writes into dotfile directories (.git, .github, .githooks, etc.).
+    rel_parts = candidate.relative_to(repo_root).parts
+    if any(p.startswith(".") for p in rel_parts):
+        print(f"Rejecting dotfile/dot-directory path: {candidate}")
+        sys.exit(0)
+
+    # Reject protected file types and names.
+    blocked = {".yml", ".yaml", ".lock"}
+    lowered_skips = {n.lower() for n in SKIP_FILES}
+    if candidate.suffix.lower() in blocked or candidate.name.lower() in lowered_skips:
+        print(f"Skipping protected file type: {candidate}")
+        sys.exit(0)
+
+    file_path = candidate
     print(f"Improvement: {commit_msg}")
     print(f"File:        {file_path}")
-
-    # Safety guard — don't touch workflow or lock files
-    blocked = {".yml", ".yaml", ".lock"}
-    if file_path.suffix in blocked or file_path.name in SKIP_FILES:
-        print(f"Skipping protected file type: {file_path}")
-        sys.exit(0)
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(imp["file_content"], encoding="utf-8")
@@ -187,8 +209,9 @@ def main() -> None:
 
     branch = f"improve/{datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
     run(["git", "checkout", "-b", branch])
-    run(["git", "add", str(file_path)])
-    run(["git", "commit", "-m", commit_msg])
+    run(["git", "add", "--", str(file_path)])
+    # Disable hooks so a planted pre-commit hook cannot execute.
+    run(["git", "-c", "core.hooksPath=/dev/null", "commit", "-m", commit_msg])
     run(["git", "push", "origin", branch])
 
     subprocess.run(
