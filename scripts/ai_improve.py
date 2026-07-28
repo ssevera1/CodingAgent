@@ -40,6 +40,18 @@ def tracked_files() -> list[str]:
     return [f for f in out.splitlines() if f]
 
 
+def default_branch() -> str:
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if repo:
+        name = sh(["gh", "api", f"repos/{repo}", "--jq", ".default_branch"])
+        if name:
+            return name
+    ref = sh(["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+    if ref:
+        return ref.rsplit("/", 1)[-1]
+    return "main"
+
+
 def build_context() -> str:
     files = tracked_files()
     tree = "\n".join(files)
@@ -170,6 +182,9 @@ def main() -> None:
     run(["git", "config", "user.name",  os.environ.get("GIT_AUTHOR_NAME",  "Scott Severance")])
     run(["git", "config", "user.email", os.environ.get("GIT_AUTHOR_EMAIL", "scott@scottseverance.net")])
 
+    base = default_branch()
+    print(f"Base branch: {base}")
+
     branch = f"improve/{datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
     run(["git", "checkout", "-b", branch])
     run(["git", "add", str(file_path)])
@@ -180,7 +195,7 @@ def main() -> None:
         ["gh", "pr", "create",
          "--title", pr_title,
          "--body", pr_body,
-         "--base", "main",
+         "--base", base,
          "--head", branch],
         check=True,
         env=os.environ,
