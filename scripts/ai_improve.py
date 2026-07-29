@@ -27,6 +27,9 @@ MAX_OUTPUT_TOKENS = 16_384
 SHRINK_FLOOR = 0.6
 # Skip the run entirely once this many bot PRs are already awaiting review.
 MAX_OPEN_PRS = int(os.environ.get("MAX_OPEN_PRS", "5"))
+# How many already-closed proposals to recall, so a drained queue does not reset
+# the bot's memory of what it has tried.
+RECENT_PR_MEMORY = int(os.environ.get("RECENT_PR_MEMORY", "20"))
 PRIORITY_DIRS = {"src", "tests", "test", "lib", "core", "scripts"}
 PRIORITY_EXTS = {".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs"}
 READABLE_EXTS = PRIORITY_EXTS | {".yaml", ".yml", ".toml", ".sh", ".md", ".json"}
@@ -50,13 +53,13 @@ def tracked_files() -> list[str]:
     return [f for f in out.splitlines() if f]
 
 
-def open_bot_prs() -> list[str]:
-    """Titles of this bot's currently-open PRs, so it neither repeats nor piles up."""
+def bot_pr_titles(state: str, limit: int) -> list[str]:
+    """Titles of this bot's PRs in the given state, newest first."""
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     if not repo:
         return []
-    out = sh(["gh", "pr", "list", "-R", repo, "--state", "open",
-              "--limit", "100", "--json", "title,headRefName"])
+    out = sh(["gh", "pr", "list", "-R", repo, "--state", state,
+              "--limit", str(limit), "--json", "title,headRefName"])
     if not out:
         return []
     try:
@@ -65,6 +68,20 @@ def open_bot_prs() -> list[str]:
         return []
     return [p["title"] for p in prs
             if str(p.get("headRefName", "")).startswith("improve/")]
+
+
+def open_bot_prs() -> list[str]:
+    """Currently-open proposals, so the bot neither repeats nor piles up."""
+    return bot_pr_titles("open", 100)
+
+
+def past_bot_prs() -> list[str]:
+    """Recently closed/merged proposals.
+
+    Without this the bot forgets every theme it has already tried as soon as the
+    review queue is drained, and starts re-proposing them from a clean slate.
+    """
+    return bot_pr_titles("closed", RECENT_PR_MEMORY)[:RECENT_PR_MEMORY]
 
 
 def default_branch() -> str:
@@ -247,12 +264,16 @@ def main() -> None:
               f"(limit {MAX_OPEN_PRS}); skipping run.")
         sys.exit(0)
 
+    sections = []
     if pr_titles:
-        open_prs = ("\n## Already proposed and awaiting review — do NOT repeat these\n"
-                    + "\n".join(f"- {t}" for t in pr_titles) + "\n")
-        print(f"{len(pr_titles)} open PR(s) fed back into context")
-    else:
-        open_prs = ""
+        sections.append("\n## Already proposed and awaiting review — do NOT repeat these\n"
+                        + "\n".join(f"- {t}" for t in pr_titles))
+    past_titles = past_bot_prs()
+    if past_titles:
+        sections.append("\n## Previously proposed and already closed — do NOT repeat these\n"
+                        + "\n".join(f"- {t}" for t in past_titles))
+    open_prs = ("\n".join(sections) + "\n") if sections else ""
+    print(f"{len(pr_titles)} open and {len(past_titles)} past PR(s) fed back into context")
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
