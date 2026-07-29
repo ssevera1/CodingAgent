@@ -77,7 +77,7 @@ class WebSearchTool(BaseTool):
 
     def _parse_ddg_html(self, body: str, max_results: int) -> list[dict]:
         """Parse DuckDuckGo HTML results."""
-        results = []
+        results: list[dict] = []
 
         # Find result blocks
         result_pattern = re.compile(

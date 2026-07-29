@@ -40,8 +40,12 @@ class BaseTool(ABC):
         pass
 
     @abstractmethod
-    def execute(self, **kwargs) -> ToolResult:
-        """Execute the tool with given parameters."""
+    def execute(self, *args: Any, **kwargs: Any) -> ToolResult:
+        """Execute the tool with given parameters.
+
+        Subclasses declare their own named parameters; arguments arrive as a
+        dict parsed from the model's tool call, so the base signature stays open.
+        """
         pass
 
     def to_ollama_tool(self) -> dict:

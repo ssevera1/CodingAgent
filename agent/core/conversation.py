@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from dataclasses import dataclass, field
 
 
@@ -18,7 +18,7 @@ class Message:
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
-        d = {"role": self.role, "content": self.content}
+        d: dict[str, Any] = {"role": self.role, "content": self.content}
         if self.tool_calls:
             d["tool_calls"] = self.tool_calls
         if self.tool_call_id:
