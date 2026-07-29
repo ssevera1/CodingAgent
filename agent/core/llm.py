@@ -4,7 +4,7 @@ import json
 import time
 import urllib.request
 import urllib.error
-from typing import Generator, Optional
+from typing import Generator, Literal, Optional, Union, overload
 
 from agent.core.config import LLMConfig
 
@@ -69,12 +69,31 @@ class LLMClient:
         except Exception:
             return []
 
+    # A streaming call returns a generator, not the response dict. Overloads let
+    # callers keep the precise type instead of narrowing the union by hand.
+    @overload
+    def chat(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = ...,
+        stream: Literal[False] = ...,
+    ) -> dict: ...
+
+    @overload
+    def chat(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = ...,
+        *,
+        stream: Literal[True],
+    ) -> Generator[str, None, dict]: ...
+
     def chat(
         self,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         stream: bool = False,
-    ) -> dict:
+    ) -> Union[dict, Generator[str, None, dict]]:
         """Send a chat completion request to Ollama.
 
         Args:
