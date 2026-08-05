@@ -20,6 +20,8 @@ class LLMClient:
     def __init__(self, config: LLMConfig):
         self.config = config
         self.base_url = config.base_url.rstrip("/")
+        self.timeout = config.timeout
+        self.read_timeout = getattr(config, 'read_timeout', config.timeout)
 
     def _request(self, endpoint: str, data: dict, stream: bool = False) -> dict:
         url = f"{self.base_url}{endpoint}"
@@ -31,10 +33,13 @@ class LLMClient:
             method="POST",
         )
         try:
-            resp = urllib.request.urlopen(req, timeout=self.config.timeout)
+            resp = urllib.request.urlopen(
+                req,
+                timeout=self.timeout,
+            )
             if stream:
                 return resp  # Return response object for streaming
-            return json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read(timeout=self.read_timeout).decode("utf-8"))
         except urllib.error.URLError as e:
             raise OllamaError(
                 f"Cannot connect to Ollama at {self.base_url}. "
@@ -49,8 +54,8 @@ class LLMClient:
         try:
             url = f"{self.base_url}/api/tags"
             req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode("utf-8"))
+            resp = urllib.request.urlopen(req, timeout=self.timeout)
+            data = json.loads(resp.read(timeout=self.read_timeout).decode("utf-8"))
             models = [m["name"] for m in data.get("models", [])]
             # Check if our model (or a prefix of it) is available
             model_base = self.config.model.split(":")[0]
@@ -63,8 +68,8 @@ class LLMClient:
         try:
             url = f"{self.base_url}/api/tags"
             req = urllib.request.Request(url)
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode("utf-8"))
+            resp = urllib.request.urlopen(req, timeout=self.timeout)
+            data = json.loads(resp.read(timeout=self.read_timeout).decode("utf-8"))
             return [m["name"] for m in data.get("models", [])]
         except Exception:
             return []
