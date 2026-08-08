@@ -1,6 +1,7 @@
 """Web tools: search and fetch for online operations."""
 
 import json
+import socket
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -70,6 +71,8 @@ class WebSearchTool(BaseTool):
                 lines.append("")
 
             return ToolResult(True, "\n".join(lines))
+        except socket.timeout:
+            return ToolResult(False, "", f"Search timeout: server took too long to respond")
         except urllib.error.URLError as e:
             return ToolResult(False, "", f"Search failed (network error): {e}")
         except Exception as e:
@@ -167,6 +170,8 @@ class WebFetchTool(BaseTool):
                 text = text[:max_length] + "\n\n... [content truncated]"
 
             return ToolResult(True, f"Content from {url}:\n\n{text}")
+        except socket.timeout:
+            return ToolResult(False, "", f"Fetch timeout: server took too long to respond")
         except urllib.error.HTTPError as e:
             return ToolResult(False, "", f"HTTP {e.code}: {e.reason}")
         except urllib.error.URLError as e:
@@ -180,7 +185,7 @@ class WebFetchTool(BaseTool):
         text = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL)
         text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
         # Convert common tags
-        text = re.sub(r"<br\s*/?>", "\n", text)
+        text = re.sub(r"<br\s*/?>\n", text)
         text = re.sub(r"</(p|div|h[1-6]|li|tr)>", "\n", text)
         text = re.sub(r"<h([1-6])[^>]*>", lambda m: "\n" + "#" * int(m.group(1)) + " ", text)
         text = re.sub(r"<li[^>]*>", "  - ", text)
