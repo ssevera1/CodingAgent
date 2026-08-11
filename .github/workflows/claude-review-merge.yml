@@ -1,0 +1,61 @@
+name: Claude Review & Auto-Merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are an automated code reviewer. The PR branch is already
+            checked out in the current working directory. Review the full
+            diff (`gh pr diff ${{ github.event.pull_request.number }}`) for:
+            - Correctness and logic bugs
+            - Security issues (injection, path traversal, secret leakage,
+              unsafe error handling that swallows real failures)
+            - Whether the change actually matches the intent of the PR
+              title/description
+            - Whether it's reasonably scoped (no unrelated changes bundled in)
+
+            Decide APPROVE or REQUEST_CHANGES, then act on it:
+
+            - If the change is correct, safe, and reasonably scoped:
+              run `gh pr review ${{ github.event.pull_request.number }} --approve --body "<2-3 sentence summary of what you checked and why it's safe>"`
+              then run `gh pr merge ${{ github.event.pull_request.number }} --auto --squash --delete-branch`.
+              (`--auto` waits for CI to go green before it actually merges —
+              you do not need to check CI status yourself, and you should not
+              merge if you have any doubt about correctness.)
+            - If you find a real problem, are unsure, or the diff is doing
+              something beyond its stated scope:
+              run `gh pr review ${{ github.event.pull_request.number }} --request-changes --body "<specific, actionable feedback tied to line numbers>"`
+              and do NOT run `gh pr merge`.
+
+            Post exactly one review. Do not also leave a separate top-level
+            comment repeating the review body.
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr merge:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
