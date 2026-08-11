@@ -22,7 +22,13 @@ class LLMClient:
         self.config = config
         self.base_url = config.base_url.rstrip("/")
 
-    def _request(self, endpoint: str, data: dict, stream: bool = False) -> dict:
+    def _request(
+        self,
+        endpoint: str,
+        data: dict,
+        stream: bool = False,
+        timeout: Optional[float] = None,
+    ) -> dict:
         url = f"{self.base_url}{endpoint}"
         payload = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(
@@ -31,8 +37,9 @@ class LLMClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        effective_timeout = timeout if timeout is not None else self.config.timeout
         try:
-            resp = urllib.request.urlopen(req, timeout=self.config.timeout)
+            resp = urllib.request.urlopen(req, timeout=effective_timeout)
             if stream:
                 return resp  # Return response object for streaming
             return json.loads(resp.read().decode("utf-8"))
@@ -88,6 +95,7 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = ...,
         stream: Literal[False] = ...,
+        timeout: Optional[float] = ...,
     ) -> dict: ...
 
     @overload
@@ -97,6 +105,7 @@ class LLMClient:
         tools: Optional[list[dict]] = ...,
         *,
         stream: Literal[True],
+        timeout: Optional[float] = ...,
     ) -> Generator[str, None, dict]: ...
 
     def chat(
@@ -104,6 +113,7 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         stream: bool = False,
+        timeout: Optional[float] = None,
     ) -> Union[dict, Generator[str, None, dict]]:
         """Send a chat completion request to Ollama.
 
@@ -111,6 +121,7 @@ class LLMClient:
             messages: List of message dicts with 'role' and 'content'.
             tools: Optional list of tool definitions for function calling.
             stream: Whether to stream the response.
+            timeout: Optional per-request timeout override in seconds.
 
         Returns:
             Response dict with 'message' containing 'role', 'content',
@@ -130,14 +141,18 @@ class LLMClient:
             data["tools"] = tools
 
         if stream:
-            return self._stream_chat(data)
+            return self._stream_chat(data, timeout=timeout)
 
-        result = self._request("/api/chat", data)
+        result = self._request("/api/chat", data, timeout=timeout)
         return result
 
-    def _stream_chat(self, data: dict) -> Generator[str, None, dict]:
+    def _stream_chat(
+        self,
+        data: dict,
+        timeout: Optional[float] = None,
+    ) -> Generator[str, None, dict]:
         """Stream chat response, yielding content chunks."""
-        resp = self._request("/api/chat", data, stream=True)
+        resp = self._request("/api/chat", data, stream=True, timeout=timeout)
         full_response = {"message": {"role": "assistant", "content": ""}}
 
         try:
@@ -166,8 +181,16 @@ class LLMClient:
 
         return full_response
 
-    def generate(self, prompt: str) -> str:
-        """Simple text generation without chat format."""
+    def generate(self, prompt: str, timeout: Optional[float] = None) -> str:
+        """Simple text generation without chat format.
+
+        Args:
+            prompt: The prompt to generate from.
+            timeout: Optional per-request timeout override in seconds.
+
+        Returns:
+            Generated text response.
+        """
         data = {
             "model": self.config.model,
             "prompt": prompt,
@@ -177,16 +200,28 @@ class LLMClient:
                 "num_predict": self.config.max_tokens,
             },
         }
-        result = self._request("/api/generate", data)
+        result = self._request("/api/generate", data, timeout=timeout)
         return result.get("response", "")
 
-    def pull_model(self, model_name: Optional[str] = None) -> bool:
-        """Pull/download a model from Ollama registry."""
+    def pull_model(
+        self,
+        model_name: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> bool:
+        """Pull/download a model from Ollama registry.
+
+        Args:
+            model_name: Model name to pull. Uses config model if not specified.
+            timeout: Optional per-request timeout override in seconds.
+
+        Returns:
+            True if pull succeeded, False otherwise.
+        """
         model = model_name or self.config.model
         print(f"Pulling model '{model}'... This may take a while.")
         try:
             data = {"name": model, "stream": False}
-            self._request("/api/pull", data)
+            self._request("/api/pull", data, timeout=timeout)
             print(f"Model '{model}' pulled successfully.")
             return True
         except OllamaError as e:
