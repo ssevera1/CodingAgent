@@ -1,6 +1,7 @@
 """LLM interface for Ollama-based models."""
 
 import json
+import socket
 import time
 import urllib.request
 import urllib.error
@@ -35,7 +36,17 @@ class LLMClient:
             if stream:
                 return resp  # Return response object for streaming
             return json.loads(resp.read().decode("utf-8"))
+        except socket.timeout:
+            raise OllamaError(
+                f"Timeout connecting to Ollama at {self.base_url} "
+                f"(waited {self.config.timeout}s). Make sure Ollama is running."
+            )
         except urllib.error.URLError as e:
+            if isinstance(e.reason, (socket.timeout, socket.error, ConnectionRefusedError, OSError)):
+                raise OllamaError(
+                    f"Cannot connect to Ollama at {self.base_url}. "
+                    f"Make sure Ollama is running: {e}"
+                )
             raise OllamaError(
                 f"Cannot connect to Ollama at {self.base_url}. "
                 f"Make sure Ollama is running: {e}"
@@ -129,23 +140,29 @@ class LLMClient:
         resp = self._request("/api/chat", data, stream=True)
         full_response = {"message": {"role": "assistant", "content": ""}}
 
-        for line in resp:
-            line = line.decode("utf-8").strip()
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line)
-                if "message" in chunk:
-                    content = chunk["message"].get("content", "")
-                    full_response["message"]["content"] += content
-                    yield content
-                    # Check for tool calls
-                    if "tool_calls" in chunk["message"]:
-                        full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
-                if chunk.get("done", False):
-                    break
-            except json.JSONDecodeError:
-                continue
+        try:
+            for line in resp:
+                line = line.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    if "message" in chunk:
+                        content = chunk["message"].get("content", "")
+                        full_response["message"]["content"] += content
+                        yield content
+                        # Check for tool calls
+                        if "tool_calls" in chunk["message"]:
+                            full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
+                    if chunk.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    continue
+        except socket.timeout:
+            raise OllamaError(
+                f"Timeout streaming from Ollama at {self.base_url} "
+                f"(waited {self.config.timeout}s)."
+            )
 
         return full_response
 
