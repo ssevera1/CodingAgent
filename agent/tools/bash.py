@@ -24,6 +24,11 @@ DANGEROUS_PATTERNS = [
     "git clean -f", "git checkout .",
 ]
 
+# Minimum timeout to prevent accidental no-timeout execution
+MIN_TIMEOUT = 1
+DEFAULT_TIMEOUT = 120
+MAX_TIMEOUT = 600
+
 
 class BashTool(BaseTool):
     """Execute shell commands."""
@@ -66,7 +71,15 @@ class BashTool(BaseTool):
         cmd_lower = command.lower()
         return any(p in cmd_lower for p in DANGEROUS_PATTERNS)
 
-    def execute(self, command: str, timeout: int = 120, **kw) -> ToolResult:
+    def _sanitize_timeout(self, timeout: Optional[int]) -> int:
+        """Validate and enforce timeout bounds."""
+        if timeout is None:
+            return DEFAULT_TIMEOUT
+        if not isinstance(timeout, int):
+            return DEFAULT_TIMEOUT
+        return max(MIN_TIMEOUT, min(timeout, MAX_TIMEOUT))
+
+    def execute(self, command: str, timeout: Optional[int] = None, **kw) -> ToolResult:
         # Safety checks
         blocked = self._is_blocked(command)
         if blocked:
@@ -79,7 +92,8 @@ class BashTool(BaseTool):
                 "Set auto_approve_bash=true in config or confirm interactively."
             )
 
-        timeout = min(timeout, 600)
+        # Validate and enforce timeout
+        timeout = self._sanitize_timeout(timeout)
 
         try:
             is_windows = platform.system() == "Windows"
