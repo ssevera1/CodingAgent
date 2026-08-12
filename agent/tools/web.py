@@ -185,7 +185,7 @@ class WebFetchTool(BaseTool):
         text = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL)
         text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
         # Convert common tags
-        text = re.sub(r"<br\s*/?>\n", text)
+        text = re.sub(r"<br\s*/?>", "\n", text)
         text = re.sub(r"</(p|div|h[1-6]|li|tr)>", "\n", text)
         text = re.sub(r"<h([1-6])[^>]*>", lambda m: "\n" + "#" * int(m.group(1)) + " ", text)
         text = re.sub(r"<li[^>]*>", "  - ", text)
