@@ -1,6 +1,7 @@
 """Web tools: search and fetch for online operations."""
 
 import json
+import socket
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -70,6 +71,8 @@ class WebSearchTool(BaseTool):
                 lines.append("")
 
             return ToolResult(True, "\n".join(lines))
+        except socket.timeout:
+            return ToolResult(False, "", f"Search timeout: server took too long to respond")
         except urllib.error.URLError as e:
             return ToolResult(False, "", f"Search failed (network error): {e}")
         except Exception as e:
@@ -167,6 +170,8 @@ class WebFetchTool(BaseTool):
                 text = text[:max_length] + "\n\n... [content truncated]"
 
             return ToolResult(True, f"Content from {url}:\n\n{text}")
+        except socket.timeout:
+            return ToolResult(False, "", f"Fetch timeout: server took too long to respond")
         except urllib.error.HTTPError as e:
             return ToolResult(False, "", f"HTTP {e.code}: {e.reason}")
         except urllib.error.URLError as e:
