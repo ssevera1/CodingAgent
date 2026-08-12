@@ -78,6 +78,18 @@ class Conversation:
                     self.messages.pop(i)
                     break
 
+    def _validate_context(self) -> bool:
+        """Validate that context fits within hard limits before sending to LLM.
+        
+        Returns True if context is within bounds, False otherwise.
+        """
+        if len(self.messages) > self.max_messages:
+            return False
+        total_chars = sum(len(m.content) for m in self.messages)
+        if total_chars > self.max_chars:
+            return False
+        return True
+
     def clear(self):
         """Clear all messages except system."""
         system = [m for m in self.messages if m.role == "system"]
