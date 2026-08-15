@@ -36,20 +36,29 @@ class Conversation:
         self.max_messages = max_messages
         self.max_chars = max_chars
 
+    def _validate_content(self, content: str) -> None:
+        """Validate that content is not None or empty."""
+        if not content or not isinstance(content, str):
+            raise ValueError("Message content cannot be None or empty")
+
     def add_system(self, content: str):
+        self._validate_content(content)
         # Replace any existing system message
         self.messages = [m for m in self.messages if m.role != "system"]
         self.messages.insert(0, Message(role="system", content=content))
 
     def add_user(self, content: str):
+        self._validate_content(content)
         self.messages.append(Message(role="user", content=content))
 
     def add_assistant(self, content: str, tool_calls: Optional[list] = None):
+        self._validate_content(content)
         self.messages.append(
             Message(role="assistant", content=content, tool_calls=tool_calls)
         )
 
     def add_tool_result(self, tool_call_id: str, name: str, content: str):
+        self._validate_content(content)
         self.messages.append(
             Message(role="tool", content=content, tool_call_id=tool_call_id, name=name)
         )
