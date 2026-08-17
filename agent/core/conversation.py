@@ -17,6 +17,10 @@ class Message:
     name: Optional[str] = None  # tool name for tool messages
     timestamp: float = field(default_factory=time.time)
 
+    def __post_init__(self):
+        if not self.content or (isinstance(self.content, str) and not self.content.strip()):
+            raise ValueError(f"Message content cannot be None or empty (role={self.role})")
+
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role, "content": self.content}
         if self.tool_calls:
