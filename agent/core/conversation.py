@@ -37,19 +37,26 @@ class Conversation:
         self.max_chars = max_chars
 
     def add_system(self, content: str):
-        # Replace any existing system message
+        if content is None or (isinstance(content, str) and not content.strip()):
+            raise ValueError("Message content cannot be empty or None")
         self.messages = [m for m in self.messages if m.role != "system"]
         self.messages.insert(0, Message(role="system", content=content))
 
     def add_user(self, content: str):
+        if content is None or (isinstance(content, str) and not content.strip()):
+            raise ValueError("Message content cannot be empty or None")
         self.messages.append(Message(role="user", content=content))
 
     def add_assistant(self, content: str, tool_calls: Optional[list] = None):
+        if content is None or (isinstance(content, str) and not content.strip()):
+            raise ValueError("Message content cannot be empty or None")
         self.messages.append(
             Message(role="assistant", content=content, tool_calls=tool_calls)
         )
 
     def add_tool_result(self, tool_call_id: str, name: str, content: str):
+        if content is None or (isinstance(content, str) and not content.strip()):
+            raise ValueError("Message content cannot be empty or None")
         self.messages.append(
             Message(role="tool", content=content, tool_call_id=tool_call_id, name=name)
         )
