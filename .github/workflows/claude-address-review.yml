@@ -114,6 +114,15 @@ jobs:
         if: steps.budget.outputs.proceed == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `if:` above requires the triggering review to have been
+          # posted by claude[bot] - but claude-code-action's default
+          # actor-type guard rejects any run triggered by a bot actor
+          # ("Workflow initiated by non-human actor"). Without this the
+          # job always fails at the action step, every time, for every PR:
+          # confirmed in production on 2026-08-24 across four repos
+          # (Agent-Builder #29, GraphRAG-Compliance-Navigator #30,
+          # Self-Healing-MLOps-Pipeline #29, DeepResearchAgent #11).
+          allowed_bots: claude[bot]
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ env.PR }}
