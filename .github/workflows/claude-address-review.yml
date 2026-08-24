@@ -1,0 +1,154 @@
+name: Claude Address Review
+
+# The missing arc. The reviewer could block a PR and the merger could merge
+# one, but nothing picked a PR back up after REQUEST_CHANGES - so every
+# rejected proposal sat until MAX_OPEN_PRS was reached and the improvement
+# loop stopped producing anything at all.
+#
+# This responds to a blocking review by dispatching Claude to address it.
+# It is bounded: after MAX_ATTEMPTS rounds of changes-requested on the same
+# PR, it stops and leaves the PR alone, and pr-janitor.yml closes it once it
+# goes stale. Without that bound two bots disagreeing would ping-pong until
+# someone noticed the API bill.
+#
+# Scope is deliberately narrow: only the bot's own improve/* branches, and
+# only reviews written by claude[bot]. Widen the `if` below to cover human
+# reviews or other branches once you trust the behaviour.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'PR number to address review feedback on'
+        required: true
+      dry_run:
+        description: 'Analyse and report, but do not commit or push'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: claude-address-${{ github.event.pull_request.number || github.event.inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  address:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.review.state == 'changes_requested' &&
+       github.event.review.user.login == 'claude[bot]' &&
+       startsWith(github.event.pull_request.head.ref, 'improve/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      MAX_ATTEMPTS: '2'
+
+    steps:
+      - name: Check attempt budget
+        id: budget
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rounds=$(gh api "repos/${{ github.repository }}/pulls/${PR}/reviews" \
+            --jq '[.[] | select(.state == "CHANGES_REQUESTED")] | length')
+          echo "changes-requested rounds on #${PR}: ${rounds} (budget: ${MAX_ATTEMPTS})"
+          if [ "$rounds" -gt "$MAX_ATTEMPTS" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stand down, budget exhausted
+        if: steps.budget.outputs.proceed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "$PR" --body "Auto-fix budget exhausted after ${MAX_ATTEMPTS} rounds — not attempting another pass.
+
+          Two bots disagreeing past this point usually means the proposal needs a human call, or is not worth the churn. Leaving the PR as-is; \`pr-janitor.yml\` will close it if it goes stale."
+
+      - uses: actions/checkout@v7
+        if: steps.budget.outputs.proceed == 'true'
+        with:
+          # GH_PAT, not GITHUB_TOKEN: a push made with GITHUB_TOKEN does not
+          # trigger further workflow runs, so the re-review would never fire
+          # and the fix would sit unverified.
+          token: ${{ secrets.GH_PAT }}
+          ref: ${{ github.event.pull_request.head.ref || format('refs/pull/{0}/head', github.event.inputs.pr) }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        if: steps.budget.outputs.proceed == 'true'
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v7
+        if: steps.budget.outputs.proceed == 'true'
+        with:
+          node-version: '22'
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.budget.outputs.proceed == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ env.PR }}
+            DRY RUN: ${{ env.DRY_RUN }}
+
+            A reviewer requested changes on this PR. The PR branch is checked
+            out in the working directory. Your job is to resolve that review.
+
+            Read the most recent CHANGES_REQUESTED review body:
+              gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/reviews \
+                --jq '[.[] | select(.state == "CHANGES_REQUESTED")] | last | .body'
+            and the diff under review (`gh pr diff ${{ env.PR }}`).
+
+            VERIFY BEFORE YOU IMPLEMENT. The reviewer is another model and is
+            sometimes wrong. For each point it raises, check the claim against
+            the actual code first - read the file, follow the call sites, check
+            the type or the dependency it names. Do not implement a suggestion
+            you have not confirmed.
+
+            - Where the reviewer is right: fix it, and add a regression test
+              that fails without your fix. Say so plainly in your summary; do
+              not thank the reviewer or perform agreement.
+            - Where the reviewer is wrong, or has missed context that makes the
+              current code correct: do NOT change that part. Explain why in
+              your summary, citing the specific file and line that shows it.
+              Pushing back with evidence is a valid outcome.
+            - If the whole proposal is misconceived and cannot be salvaged, say
+              so and change nothing. Do not force a fix to look productive.
+
+            Then run the repository's own checks, inferring the commands from
+            .github/workflows/ci.yml (typically `pytest -q` and
+            `mypy --ignore-missing-imports <pkg>`, or `pnpm typecheck` and
+            `pnpm test`). Install whatever they need first. Everything must
+            pass before you push.
+
+            If DRY RUN is 'true': stop here. Post a comment describing what you
+            would have changed, and do not commit or push anything.
+
+            Otherwise, if and only if you changed files and the checks pass:
+              git add -A
+              git commit -m "fix(review): <what you actually changed>"
+              git push
+            The `fix(review):` prefix is the convention for these commits.
+
+            Finally post exactly one PR comment: what you fixed, what you
+            pushed back on and why, and the check results. If you changed
+            nothing, the comment should say that and explain why. Do not post a
+            review - you are the author here, not the reviewer.
+          claude_args: |
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash"
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
