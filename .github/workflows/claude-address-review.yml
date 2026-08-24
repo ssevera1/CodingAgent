@@ -58,23 +58,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          rounds=$(gh api "repos/${{ github.repository }}/pulls/${PR}/reviews" \
-            --jq '[.[] | select(.state == "CHANGES_REQUESTED")] | length')
-          echo "changes-requested rounds on #${PR}: ${rounds} (budget: ${MAX_ATTEMPTS})"
-          if [ "$rounds" -gt "$MAX_ATTEMPTS" ]; then
+
+          pr_json=$(gh api "repos/${{ github.repository }}/pulls/${PR}")
+          state=$(echo "$pr_json" | jq -r ".state")
+          head_ref=$(echo "$pr_json" | jq -r ".head.ref")
+          rounds=$(gh api "repos/${{ github.repository }}/pulls/${PR}/reviews" --jq "[.[] | select(.state == \"CHANGES_REQUESTED\")] | length")
+
+          echo "PR #${PR}: state=${state} head=${head_ref} changes-requested rounds=${rounds} budget=${MAX_ATTEMPTS}"
+          echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"
+
+          if [ "$state" != "open" ]; then
+            # A merged/closed PR usually has had its head branch deleted, so
+            # there is nothing to check out and nothing left to address.
+            echo "PR is ${state}; standing down."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=not-open" >> "$GITHUB_OUTPUT"
+          elif [ "$rounds" -gt "$MAX_ATTEMPTS" ]; then
+            echo "Budget exhausted; standing down."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=budget" >> "$GITHUB_OUTPUT"
           else
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           fi
 
-          # Resolve the real branch name rather than refs/pull/N/head,
-          # which checks out detached and cannot be pushed back.
-          head_ref=$(gh api "repos/${{ github.repository }}/pulls/${PR}" --jq ".head.ref")
-          echo "head branch: ${head_ref}"
-          echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"
-
       - name: Stand down, budget exhausted
-        if: steps.budget.outputs.proceed == 'false'
+        if: steps.budget.outputs.reason == 'budget'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
