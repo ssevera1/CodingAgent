@@ -52,7 +52,7 @@ jobs:
       MAX_ATTEMPTS: '2'
 
     steps:
-      - name: Check attempt budget
+      - name: Check attempt budget and resolve head branch
         id: budget
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,6 +66,12 @@ jobs:
           else
             echo "proceed=true" >> "$GITHUB_OUTPUT"
           fi
+
+          # Resolve the real branch name rather than refs/pull/N/head,
+          # which checks out detached and cannot be pushed back.
+          head_ref=$(gh api "repos/${{ github.repository }}/pulls/${PR}" --jq ".head.ref")
+          echo "head branch: ${head_ref}"
+          echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"
 
       - name: Stand down, budget exhausted
         if: steps.budget.outputs.proceed == 'false'
@@ -83,7 +89,7 @@ jobs:
           # trigger further workflow runs, so the re-review would never fire
           # and the fix would sit unverified.
           token: ${{ secrets.GH_PAT }}
-          ref: ${{ github.event.pull_request.head.ref || format('refs/pull/{0}/head', github.event.inputs.pr) }}
+          ref: ${{ steps.budget.outputs.head_ref }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v7
