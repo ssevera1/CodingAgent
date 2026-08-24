@@ -301,10 +301,15 @@ class TestConversation(unittest.TestCase):
         self.assertEqual(messages[-1]["role"], "assistant")
         self.assertEqual(messages[-1]["tool_calls"][0]["id"], "1")
 
-    def test_assistant_message_still_rejects_empty_without_tool_calls(self):
+    def test_assistant_message_may_be_empty_without_tool_calls(self):
+        """A truncated or silent final response is still a valid assistant turn."""
         conv = Conversation()
-        with self.assertRaises(ValueError):
-            conv.add_assistant("")
+        conv.add_system("System")
+        conv.add_assistant("")
+
+        messages = conv.get_messages()
+        self.assertEqual(messages[-1]["role"], "assistant")
+        self.assertEqual(messages[-1]["content"], "")
 
     def test_assistant_message_rejects_none(self):
         conv = Conversation()

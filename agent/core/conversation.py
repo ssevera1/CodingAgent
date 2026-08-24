@@ -49,14 +49,12 @@ class Conversation:
         self.messages.append(Message(role="user", content=content))
 
     def add_assistant(self, content: str, tool_calls: Optional[list] = None):
+        # An empty assistant turn is a valid shape in the chat API, with or
+        # without tool calls: a native tool call carries no prose, and a
+        # truncated or silent final response legitimately has none either.
+        # Only None indicates a genuine caller bug.
         if content is None:
             raise ValueError("Assistant message content cannot be None")
-        # A native tool call arrives with empty content and a populated
-        # tool_calls list; that is the normal shape, not a malformed message.
-        if not tool_calls and not content.strip():
-            raise ValueError(
-                "Assistant message content cannot be empty without tool calls"
-            )
         self.messages.append(
             Message(role="assistant", content=content, tool_calls=tool_calls)
         )
