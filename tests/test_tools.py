@@ -291,6 +291,46 @@ class TestConversation(unittest.TestCase):
         finally:
             shutil.rmtree(tmpdir)
 
+    def test_assistant_message_may_be_empty_when_tool_calls_present(self):
+        """Native tool calls arrive with empty content; that is a valid message."""
+        conv = Conversation()
+        conv.add_system("System")
+        conv.add_assistant("", [{"id": "1", "function": {"name": "read_file"}}])
+
+        messages = conv.get_messages()
+        self.assertEqual(messages[-1]["role"], "assistant")
+        self.assertEqual(messages[-1]["tool_calls"][0]["id"], "1")
+
+    def test_assistant_message_may_be_empty_without_tool_calls(self):
+        """A truncated or silent final response is still a valid assistant turn."""
+        conv = Conversation()
+        conv.add_system("System")
+        conv.add_assistant("")
+
+        messages = conv.get_messages()
+        self.assertEqual(messages[-1]["role"], "assistant")
+        self.assertEqual(messages[-1]["content"], "")
+
+    def test_assistant_message_rejects_none(self):
+        conv = Conversation()
+        with self.assertRaises(ValueError):
+            conv.add_assistant(None)
+
+    def test_tool_result_may_be_empty(self):
+        """A successful tool can legitimately produce no output (e.g. grep, no match)."""
+        conv = Conversation()
+        conv.add_system("System")
+        conv.add_tool_result("1", "grep", "")
+
+        messages = conv.get_messages()
+        self.assertEqual(messages[-1]["role"], "tool")
+        self.assertEqual(messages[-1]["content"], "")
+
+    def test_tool_result_rejects_none(self):
+        conv = Conversation()
+        with self.assertRaises(ValueError):
+            conv.add_tool_result("1", "grep", None)
+
 
 class TestSafety(unittest.TestCase):
     def test_sensitive_files(self):

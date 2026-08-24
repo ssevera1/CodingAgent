@@ -182,3 +182,70 @@ class TestAutoApproval(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProcessMessageEmptyResponses(unittest.TestCase):
+    """End-to-end cover for the paths #27 made crashable.
+
+    These drive process_message itself rather than Conversation in
+    isolation - a unit test on Conversation alone is exactly what let #27
+    through CI.
+    """
+
+    def _engine(self):
+        config = Config()
+        config.web.enabled = False
+        config.agent.max_turns = 3
+        return AgentEngine(config)
+
+    def test_empty_final_response_does_not_crash(self):
+        engine = self._engine()
+        with patch.object(
+            engine, "_call_llm", return_value={"message": {"content": ""}}
+        ):
+            result = engine.process_message("hello")
+
+        self.assertEqual(result, "")
+        self.assertEqual(engine.conversation.messages[-1].role, "assistant")
+
+    def test_whitespace_only_final_response_does_not_crash(self):
+        engine = self._engine()
+        with patch.object(
+            engine, "_call_llm", return_value={"message": {"content": "   "}}
+        ):
+            result = engine.process_message("hello")
+
+        self.assertEqual(result.strip(), "")
+
+    def test_null_content_does_not_crash(self):
+        """A present-but-null content key must not reach add_assistant as None."""
+        engine = self._engine()
+        with patch.object(
+            engine, "_call_llm", return_value={"message": {"content": None}}
+        ):
+            result = engine.process_message("hello")
+
+        self.assertEqual(result, "")
+
+    def test_native_tool_call_with_empty_content_does_not_crash(self):
+        engine = self._engine()
+        responses = [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "function": {"name": "list_directory", "arguments": {}},
+                        }
+                    ],
+                }
+            },
+            {"message": {"content": "All done."}},
+        ]
+        with patch.object(engine, "_call_llm", side_effect=responses):
+            result = engine.process_message("list the files")
+
+        self.assertEqual(result, "All done.")
+        roles = [m.role for m in engine.conversation.messages]
+        self.assertIn("tool", roles)

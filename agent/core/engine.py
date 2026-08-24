@@ -91,8 +91,10 @@ class AgentEngine:
                 print(error(error_msg))
                 return error_msg
 
-            content = response.get("message", {}).get("content", "")
-            tool_calls_from_api = response.get("message", {}).get("tool_calls", [])
+            # `or ""` guards a present-but-null content key, which would
+            # otherwise reach add_assistant as None.
+            content = response.get("message", {}).get("content", "") or ""
+            tool_calls_from_api = response.get("message", {}).get("tool_calls", []) or []
 
             # Check for tool calls in the content (```tool blocks)
             tool_calls_from_content = self._extract_tool_calls(content)
