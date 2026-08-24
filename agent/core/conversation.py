@@ -49,15 +49,23 @@ class Conversation:
         self.messages.append(Message(role="user", content=content))
 
     def add_assistant(self, content: str, tool_calls: Optional[list] = None):
-        if not content or not content.strip():
-            raise ValueError("Assistant message content cannot be None or empty")
+        if content is None:
+            raise ValueError("Assistant message content cannot be None")
+        # A native tool call arrives with empty content and a populated
+        # tool_calls list; that is the normal shape, not a malformed message.
+        if not tool_calls and not content.strip():
+            raise ValueError(
+                "Assistant message content cannot be empty without tool calls"
+            )
         self.messages.append(
             Message(role="assistant", content=content, tool_calls=tool_calls)
         )
 
     def add_tool_result(self, tool_call_id: str, name: str, content: str):
-        if not content or not content.strip():
-            raise ValueError("Tool result content cannot be None or empty")
+        # A successful tool can legitimately produce no output (grep with no
+        # match, a write that prints nothing), so empty is allowed here.
+        if content is None:
+            raise ValueError("Tool result content cannot be None")
         self.messages.append(
             Message(role="tool", content=content, tool_call_id=tool_call_id, name=name)
         )
