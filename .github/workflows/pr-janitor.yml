@@ -1,0 +1,75 @@
+name: PR Janitor
+
+# The improvement loop can propose and it can merge, but nothing picks a PR
+# back up once the reviewer requests changes - so rejected proposals accrue
+# until MAX_OPEN_PRS is reached and the loop stops producing anything at all.
+# This sweeps them. Closing is also useful signal: ai_improve.py feeds closed
+# PR titles back into the prompt as "do NOT repeat these".
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      stale_days:
+        description: 'Close improvement PRs stalled this many days'
+        required: false
+        default: '7'
+      dry_run:
+        description: 'List what would be closed without closing it'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Close improvement PRs stalled on requested changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          STALE_DAYS: ${{ github.event.inputs.stale_days || '7' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          now=$(date -u +%s)
+          cutoff=$(( now - STALE_DAYS * 86400 ))
+          echo "Threshold: ${STALE_DAYS}d (before $(date -u -d "@$cutoff" --iso-8601=seconds))"
+          echo "Dry run: $DRY_RUN"
+
+          candidates=$(gh pr list -R "$REPO" --state open --limit 100 \
+            --json number,headRefName,reviewDecision,updatedAt \
+            --jq '.[]
+                  | select(.headRefName | startswith("improve/"))
+                  | select(.reviewDecision == "CHANGES_REQUESTED")
+                  | "\(.number) \(.updatedAt)"')
+
+          closed=0
+          while read -r num updated; do
+            [ -n "$num" ] || continue
+            ts=$(date -u -d "$updated" +%s)
+            [ "$ts" -lt "$cutoff" ] || { echo "  keep #$num (updated $updated)"; continue; }
+
+            days=$(( (now - ts) / 86400 ))
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "  would close #$num (stalled ${days}d)"
+              continue
+            fi
+
+            echo "  closing #$num (stalled ${days}d)"
+            body=$(printf '%s\n\n%s\n\n%s\n' \
+              "Closing automatically: changes were requested on this improvement proposal and it has sat untouched for ${days} days (threshold: ${STALE_DAYS})." \
+              "Nothing in the pipeline picks a PR back up after a REQUEST_CHANGES review, so leaving it open only consumes the \`MAX_OPEN_PRS\` budget and eventually stalls the improvement loop for this repo. The review feedback above is preserved if the idea is worth another pass." \
+              "Reopen it, or re-run the Continuous Improvement workflow for a fresh proposal.")
+            gh pr close "$num" -R "$REPO" --delete-branch --comment "$body" \
+              || echo "  !! failed to close #$num"
+            closed=$(( closed + 1 ))
+          done <<< "$candidates"
+
+          echo "Closed $closed stalled PR(s)."
