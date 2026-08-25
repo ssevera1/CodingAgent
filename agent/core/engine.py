@@ -177,6 +177,13 @@ class AgentEngine:
         finally:
             stop_spinner()
 
+        # Validate result is not None before recording
+        if result is None:
+            err_msg = f"Tool {name} returned None (crash or unhandled exception)"
+            print(error(f"  {err_msg}"))
+            self.conversation.add_tool_result(call_id, name, err_msg)
+            return
+
         # Display result
         print(f"  {format_tool_result(name, result)}")
 
