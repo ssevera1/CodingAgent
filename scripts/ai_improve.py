@@ -166,7 +166,11 @@ Constraints:
 genuinely different area of the codebase
 - Do NOT pick README.md, *.yml/*.yaml workflow files, or lock files
 
-Respond with ONLY valid JSON — no markdown fences, no prose outside the object:
+Do not think out loud, explain your reasoning, or walk through your analysis of \
+the codebase — a caller is parsing your response programmatically and any text \
+outside the object below will break it. Respond with ONLY the JSON object, \
+starting with `{{` and ending with `}}` — no markdown fences, no preamble, no \
+commentary before or after it:
 {{"file_path":"relative/path/to/file","plan":"one sentence naming the concrete change"}}
 """
 
@@ -193,7 +197,10 @@ file unmodified rather than inventing a different change
 - Commit message: conventional commits format, imperative mood, ≤72 chars \
 (e.g. "fix: handle empty feature store on first run")
 
-Respond with ONLY valid JSON — no markdown fences, no prose outside the object:
+Do not think out loud, explain your reasoning, or walk through your analysis — a \
+caller is parsing your response programmatically and any text outside the object \
+below will break it. Respond with ONLY the JSON object, starting with `{{` and \
+ending with `}}` — no markdown fences, no preamble, no commentary before or after it:
 {{"file_content":"complete file content here",\
 "commit_message":"type(scope): description","pr_title":"Short PR title (≤60 chars)",\
 "pr_body":"## What\\nOne sentence.\\n\\n## Why\\nOne sentence."}}
@@ -226,9 +233,28 @@ def ask_json(client, prompt: str, max_tokens: int) -> dict | None:
 
     try:
         return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(f"JSON parse error: {exc}\nRaw response:\n{raw[:800]}")
-        return None
+    except json.JSONDecodeError:
+        pass
+
+    # Despite the instruction, the model sometimes reasons in prose before (or
+    # instead of) emitting bare JSON. Rather than discard a usable answer,
+    # look for the first balanced {...} object anywhere in the response.
+    start = raw.find("{")
+    if start != -1:
+        depth = 0
+        for i, ch in enumerate(raw[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(raw[start:i + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    print(f"JSON parse error; no valid JSON object found.\nRaw response:\n{raw[:2000]}")
+    return None
 
 
 def safe_target(raw_path: str, repo_root: Path) -> Path | None:
