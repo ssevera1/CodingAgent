@@ -22,6 +22,23 @@ class LLMClient:
         self.config = config
         self.base_url = config.base_url.rstrip("/")
 
+    def _validate_response(self, response: dict, required_fields: list[str]) -> None:
+        """Validate that response contains expected fields.
+        
+        Args:
+            response: The response dict to validate.
+            required_fields: List of field names that must be present.
+            
+        Raises:
+            OllamaError: If any required field is missing.
+        """
+        missing = [field for field in required_fields if field not in response]
+        if missing:
+            raise OllamaError(
+                f"Malformed API response: missing required fields {missing}. "
+                f"Got: {response}"
+            )
+
     def _request(
         self,
         endpoint: str,
@@ -144,6 +161,7 @@ class LLMClient:
             return self._stream_chat(data, timeout=timeout)
 
         result = self._request("/api/chat", data, timeout=timeout)
+        self._validate_response(result, ["message"])
         return result
 
     def _stream_chat(
@@ -201,6 +219,7 @@ class LLMClient:
             },
         }
         result = self._request("/api/generate", data, timeout=timeout)
+        self._validate_response(result, ["response"])
         return result.get("response", "")
 
     def pull_model(
