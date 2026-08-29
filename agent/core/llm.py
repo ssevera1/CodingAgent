@@ -39,6 +39,34 @@ class LLMClient:
                 f"Got: {response}"
             )
 
+    def _validate_message_structure(self, response: dict) -> None:
+        """Validate that response message has expected structure.
+
+        A missing or null 'content' is tolerated when the message carries
+        'tool_calls', since a tool-call-only turn is a valid Ollama response.
+
+        Args:
+            response: The response dict to validate.
+
+        Raises:
+            OllamaError: If message structure is invalid.
+        """
+        if "message" not in response:
+            raise OllamaError(f"Missing 'message' field in response: {response}")
+        message = response["message"]
+        if not isinstance(message, dict):
+            raise OllamaError(
+                f"Expected 'message' to be a dict, got {type(message).__name__}: {response}"
+            )
+        content = message.get("content")
+        if content is None:
+            if not message.get("tool_calls"):
+                raise OllamaError(f"Missing 'content' field in message: {response}")
+        elif not isinstance(content, str):
+            raise OllamaError(
+                f"Expected 'content' to be a str, got {type(content).__name__}: {response}"
+            )
+
     def _request(
         self,
         endpoint: str,
@@ -161,7 +189,7 @@ class LLMClient:
             return self._stream_chat(data, timeout=timeout)
 
         result = self._request("/api/chat", data, timeout=timeout)
-        self._validate_response(result, ["message"])
+        self._validate_message_structure(result)
         return result
 
     def _stream_chat(
@@ -181,12 +209,20 @@ class LLMClient:
                 try:
                     chunk = json.loads(line)
                     if "message" in chunk:
-                        content = chunk["message"].get("content", "")
-                        full_response["message"]["content"] += content
-                        yield content
-                        # Check for tool calls
-                        if "tool_calls" in chunk["message"]:
-                            full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
+                        message = chunk["message"]
+                        if isinstance(message, dict):
+                            content = message.get("content")
+                            if content is not None and not isinstance(content, str):
+                                raise OllamaError(
+                                    f"Expected 'content' to be a str, got "
+                                    f"{type(content).__name__}: {chunk}"
+                                )
+                            if content:
+                                full_response["message"]["content"] += content
+                                yield content
+                            # Tool calls can arrive in a chunk without content.
+                            if "tool_calls" in message:
+                                full_response["message"]["tool_calls"] = message["tool_calls"]
                     if chunk.get("done", False):
                         break
                 except json.JSONDecodeError:
