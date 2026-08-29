@@ -39,6 +39,25 @@ class LLMClient:
                 f"Got: {response}"
             )
 
+    def _validate_message_structure(self, response: dict) -> None:
+        """Validate that response message has expected structure.
+        
+        Args:
+            response: The response dict to validate.
+            
+        Raises:
+            OllamaError: If message structure is invalid.
+        """
+        if "message" not in response:
+            raise OllamaError(f"Missing 'message' field in response: {response}")
+        message = response["message"]
+        if not isinstance(message, dict):
+            raise OllamaError(
+                f"Expected 'message' to be a dict, got {type(message).__name__}: {response}"
+            )
+        if "content" not in message:
+            raise OllamaError(f"Missing 'content' field in message: {response}")
+
     def _request(
         self,
         endpoint: str,
@@ -162,6 +181,7 @@ class LLMClient:
 
         result = self._request("/api/chat", data, timeout=timeout)
         self._validate_response(result, ["message"])
+        self._validate_message_structure(result)
         return result
 
     def _stream_chat(
@@ -181,12 +201,14 @@ class LLMClient:
                 try:
                     chunk = json.loads(line)
                     if "message" in chunk:
-                        content = chunk["message"].get("content", "")
-                        full_response["message"]["content"] += content
-                        yield content
-                        # Check for tool calls
-                        if "tool_calls" in chunk["message"]:
-                            full_response["message"]["tool_calls"] = chunk["message"]["tool_calls"]
+                        message = chunk["message"]
+                        if isinstance(message, dict) and "content" in message:
+                            content = message.get("content", "")
+                            full_response["message"]["content"] += content
+                            yield content
+                            # Check for tool calls
+                            if "tool_calls" in message:
+                                full_response["message"]["tool_calls"] = message["tool_calls"]
                     if chunk.get("done", False):
                         break
                 except json.JSONDecodeError:
