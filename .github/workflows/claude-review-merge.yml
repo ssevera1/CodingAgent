@@ -56,7 +56,11 @@ jobs:
 
             Post exactly one review. Do not also leave a separate top-level
             comment repeating the review body.
+          # Reviewing a small single-file diff does not need Opus. Sonnet 5 at
+          # medium effort costs 2.5x less per token for this workload.
           claude_args: |
+            --model claude-sonnet-5
+            --effort medium
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr merge:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

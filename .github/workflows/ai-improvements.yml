@@ -2,9 +2,10 @@ name: Continuous Improvement
 
 on:
   schedule:
-    - cron: '37 21 * * 1'   # Mon 9:37pm UTC  (4:37pm CDT)
+    # One proposal per repo per week. At 3x/week across 11 repos the
+    # review loop that follows each proposal was the largest line on
+    # the API bill.
     - cron: '14 10 * * 3'   # Wed 10:14am UTC (5:14am CDT)
-    - cron: '52 15 * * 6'   # Sat 3:52pm UTC  (10:52am CDT)
   workflow_dispatch:
 
 permissions:

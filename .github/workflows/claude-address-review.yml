@@ -49,7 +49,7 @@ jobs:
     env:
       PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-      MAX_ATTEMPTS: '2'
+      MAX_ATTEMPTS: '1'
 
     steps:
       - name: Check attempt budget and resolve head branch
