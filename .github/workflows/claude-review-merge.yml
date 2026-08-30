@@ -57,13 +57,13 @@ jobs:
             Post exactly one review. Do not also leave a separate top-level
             comment repeating the review body.
           # Runs on the Pro subscription, not the API key, so Opus costs nothing
-          # in dollars. Pro's 5-hour limits are the scarce resource instead, and
-          # they are shared with interactive sessions, which is why effort stays
-          # at medium. Plain claude-opus-5, never claude-opus-5[1m]: on Pro, Opus
-          # with the 1M context window draws usage credits.
+          # in dollars and effort is free to sit at high. It draws on the Pro
+          # 5-hour limits instead, which is why the schedule keeps these runs in
+          # the small hours, away from interactive sessions. Plain claude-opus-5,
+          # never claude-opus-5[1m]: on Pro, Opus with 1M context draws credits.
           claude_args: |
             --model claude-opus-5
-            --effort medium
+            --effort high
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr merge:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
