@@ -171,7 +171,14 @@ jobs:
             pushed back on and why, and the check results. If you changed
             nothing, the comment should say that and explain why. Do not post a
             review - you are the author here, not the reviewer.
+          # Pinned explicitly. Without --model this step takes the Claude Code
+          # default, which is a property of the credential rather than this file:
+          # Opus 5 on an API key, Sonnet 5 on a Pro subscription. It changed
+          # underfoot when auth moved to the subscription, with no diff to show
+          # for it. Sonnet handles this role well and it is the longest loop here,
+          # so it is also the heaviest draw on the 5-hour limits.
           claude_args: |
+            --model claude-sonnet-5
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
