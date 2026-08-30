@@ -26,7 +26,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -56,10 +56,13 @@ jobs:
 
             Post exactly one review. Do not also leave a separate top-level
             comment repeating the review body.
-          # Reviewing a small single-file diff does not need Opus. Sonnet 5 at
-          # medium effort costs 2.5x less per token for this workload.
+          # Runs on the Pro subscription, not the API key, so Opus costs nothing
+          # in dollars. Pro's 5-hour limits are the scarce resource instead, and
+          # they are shared with interactive sessions, which is why effort stays
+          # at medium. Plain claude-opus-5, never claude-opus-5[1m]: on Pro, Opus
+          # with the 1M context window draws usage credits.
           claude_args: |
-            --model claude-sonnet-5
+            --model claude-opus-5
             --effort medium
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(gh pr merge:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
         env:
