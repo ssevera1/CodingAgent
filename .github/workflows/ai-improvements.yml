@@ -1,14 +1,12 @@
 name: Continuous Improvement
 
 on:
-  schedule:
-    # One proposal per repo per week, staggered across weekdays and placed
-    # in the small hours so a run never lands mid-workday.
-    #
-    # Cron is UTC and ignores daylight saving. Times sit at or after 01:00
-    # CDT on purpose: under CST they shift an hour earlier, and anything
-    # before 01:00 would cross back over midnight into the previous day.
-    - cron: '37 6 * * 2'   # Tue 06:37 UTC (1:37am CDT / 0:37am CST)
+  # No `schedule:` here on purpose. GitHub's cron is best-effort: measured
+  # on these repos Aug 25-31, the daily 06:17 UTC pr-janitor started between
+  # 52 minutes and 12h27m late, so a 01:23 local slot was landing mid-workday.
+  # The trigger now comes from Windows Task Scheduler via
+  # D:\Claude\scripts\dispatch-improvements.ps1, which fires on time and
+  # catches up a slot missed while the machine was off.
   workflow_dispatch:
 
 permissions:
