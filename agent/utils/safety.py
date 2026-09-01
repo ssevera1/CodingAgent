@@ -83,7 +83,7 @@ def sanitize_command(command: str) -> tuple[bool, str]:
     """
     dangerous_patterns = [
         (r"rm\s+-rf\s+/(?:\s|$)", "Deleting root filesystem"),
-        (r":\(\)\{.*\|.*&\}", "Fork bomb detected"),
+        (r":(\)\{.*\|.*&\}", "Fork bomb detected"),
         (r"mkfs\.", "Filesystem formatting"),
         (r"dd\s+if=.*of=/dev/", "Writing to raw device"),
         (r"chmod\s+-R\s+777\s+/", "Changing permissions on root"),
@@ -109,3 +109,15 @@ def check_file_size(filepath: str, max_mb: int = 50) -> Optional[str]:
         return None
     except OSError:
         return None  # File doesn't exist yet, that's fine
+
+
+def validate_bash_result(result: Optional[str]) -> tuple[bool, str]:
+    """Validate bash tool execution result for empty or None output.
+
+    Returns (is_valid, message) tuple.
+    """
+    if result is None:
+        return False, "Command execution returned None"
+    if isinstance(result, str) and not result.strip():
+        return False, "Command produced no output"
+    return True, ""
