@@ -86,7 +86,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment "$PR" --body "Auto-fix budget exhausted after ${MAX_ATTEMPTS} rounds — not attempting another pass.
+          # This step runs before checkout (checkout is gated on proceed == 'true',
+          # and budget exhaustion sets proceed=false), so the working directory is
+          # not a git repo yet and `gh` cannot infer the target repo from a remote.
+          # Without -R this fails with "fatal: not a git repository" instead of
+          # posting the comment (confirmed in production on CodingAgent PR #33).
+          gh pr comment "$PR" -R "${{ github.repository }}" --body "Auto-fix budget exhausted after ${MAX_ATTEMPTS} rounds — not attempting another pass.
 
           Two bots disagreeing past this point usually means the proposal needs a human call, or is not worth the churn. Leaving the PR as-is; \`pr-janitor.yml\` will close it if it goes stale."
 
