@@ -21,6 +21,8 @@ class LLMClient:
     def __init__(self, config: LLMConfig):
         self.config = config
         self.base_url = config.base_url.rstrip("/")
+        self.max_retries = 3
+        self.retry_delay = 1.0
 
     def _validate_response(self, response: dict, required_fields: list[str]) -> None:
         """Validate that response contains expected fields.
@@ -76,36 +78,49 @@ class LLMClient:
     ) -> dict:
         url = f"{self.base_url}{endpoint}"
         payload = json.dumps(data).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         effective_timeout = timeout if timeout is not None else self.config.timeout
-        try:
-            resp = urllib.request.urlopen(req, timeout=effective_timeout)
-            if stream:
-                return resp  # Return response object for streaming
-            return json.loads(resp.read().decode("utf-8"))
-        except socket.timeout:
-            raise OllamaError(
-                f"Timeout connecting to Ollama at {self.base_url} "
-                f"(waited {self.config.timeout}s). Make sure Ollama is running."
-            )
-        except urllib.error.URLError as e:
-            if isinstance(e.reason, (socket.timeout, socket.error, ConnectionRefusedError, OSError)):
+        
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                resp = urllib.request.urlopen(req, timeout=effective_timeout)
+                if stream:
+                    return resp
+                return json.loads(resp.read().decode("utf-8"))
+            except socket.timeout as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                raise OllamaError(
+                    f"Timeout connecting to Ollama at {self.base_url} "
+                    f"(waited {effective_timeout}s after {self.max_retries} attempts). "
+                    f"Make sure Ollama is running."
+                )
+            except urllib.error.URLError as e:
+                if isinstance(e.reason, (socket.timeout, socket.error, ConnectionRefusedError, OSError)):
+                    last_error = e
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay * (2 ** attempt))
+                        continue
+                    raise OllamaError(
+                        f"Cannot connect to Ollama at {self.base_url} "
+                        f"after {self.max_retries} attempts. "
+                        f"Make sure Ollama is running: {e}"
+                    )
                 raise OllamaError(
                     f"Cannot connect to Ollama at {self.base_url}. "
                     f"Make sure Ollama is running: {e}"
                 )
-            raise OllamaError(
-                f"Cannot connect to Ollama at {self.base_url}. "
-                f"Make sure Ollama is running: {e}"
-            )
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise OllamaError(f"Ollama API error ({e.code}): {body}")
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                raise OllamaError(f"Ollama API error ({e.code}): {body}")
 
     def check_health(self) -> bool:
         """Check if Ollama is running and the model is available."""
