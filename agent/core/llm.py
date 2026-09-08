@@ -79,8 +79,7 @@ class LLMClient:
         url = f"{self.base_url}{endpoint}"
         payload = json.dumps(data).encode("utf-8")
         effective_timeout = timeout if timeout is not None else self.config.timeout
-        
-        last_error = None
+
         for attempt in range(self.max_retries):
             try:
                 req = urllib.request.Request(
@@ -94,18 +93,19 @@ class LLMClient:
                     return resp
                 return json.loads(resp.read().decode("utf-8"))
             except socket.timeout as e:
-                last_error = e
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2 ** attempt))
-                    continue
+                # A timeout means Ollama is still working, not that the
+                # connection failed - retrying would just queue up more
+                # concurrent work against an already-struggling server.
                 raise OllamaError(
                     f"Timeout connecting to Ollama at {self.base_url} "
-                    f"(waited {effective_timeout}s after {self.max_retries} attempts). "
-                    f"Make sure Ollama is running."
-                )
+                    f"(waited {effective_timeout}s). Make sure Ollama is running."
+                ) from e
+            except urllib.error.HTTPError as e:
+                # Must be checked before URLError: HTTPError subclasses it.
+                body = e.read().decode("utf-8", errors="replace")
+                raise OllamaError(f"Ollama API error ({e.code}): {body}") from e
             except urllib.error.URLError as e:
-                if isinstance(e.reason, (socket.timeout, socket.error, ConnectionRefusedError, OSError)):
-                    last_error = e
+                if isinstance(e.reason, (ConnectionRefusedError, socket.gaierror)):
                     if attempt < self.max_retries - 1:
                         time.sleep(self.retry_delay * (2 ** attempt))
                         continue
@@ -113,14 +113,14 @@ class LLMClient:
                         f"Cannot connect to Ollama at {self.base_url} "
                         f"after {self.max_retries} attempts. "
                         f"Make sure Ollama is running: {e}"
-                    )
+                    ) from e
                 raise OllamaError(
                     f"Cannot connect to Ollama at {self.base_url}. "
                     f"Make sure Ollama is running: {e}"
-                )
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", errors="replace")
-                raise OllamaError(f"Ollama API error ({e.code}): {body}")
+                ) from e
+
+        # Unreachable: every loop iteration either returns or raises above.
+        raise OllamaError(f"Failed to reach Ollama at {self.base_url}.")
 
     def check_health(self) -> bool:
         """Check if Ollama is running and the model is available."""
