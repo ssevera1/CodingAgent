@@ -1,8 +1,11 @@
 """Tests for the Ollama LLM client response validation."""
 
+import io
 import json
+import socket
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -164,6 +167,63 @@ class TestStreamChat(unittest.TestCase):
 
         self.assertEqual(yielded, ["ok"])
         self.assertEqual(result["message"]["content"], "ok")
+
+
+class TestRequestRetry(unittest.TestCase):
+    """Test the retry behavior in LLMClient._request."""
+
+    def test_connection_refused_is_retried_and_eventually_raises(self):
+        client = make_client()
+        error = urllib.error.URLError(ConnectionRefusedError())
+        with patch("urllib.request.urlopen", side_effect=error) as mock_urlopen, \
+                patch("time.sleep") as mock_sleep:
+            with self.assertRaises(OllamaError):
+                client._request("/api/chat", {})
+        self.assertEqual(mock_urlopen.call_count, client.max_retries)
+        self.assertEqual(mock_sleep.call_count, client.max_retries - 1)
+
+    def test_dns_failure_is_retried_and_eventually_raises(self):
+        client = make_client()
+        error = urllib.error.URLError(socket.gaierror())
+        with patch("urllib.request.urlopen", side_effect=error) as mock_urlopen, \
+                patch("time.sleep"):
+            with self.assertRaises(OllamaError):
+                client._request("/api/chat", {})
+        self.assertEqual(mock_urlopen.call_count, client.max_retries)
+
+    def test_socket_timeout_fails_fast_without_retry(self):
+        """A timeout means Ollama is still generating - retrying would only
+        make a slow response slower, so it must not be retried."""
+        client = make_client()
+        with patch("urllib.request.urlopen", side_effect=socket.timeout()) as mock_urlopen, \
+                patch("time.sleep") as mock_sleep:
+            with self.assertRaises(OllamaError):
+                client._request("/api/chat", {})
+        self.assertEqual(mock_urlopen.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    def test_non_connection_url_error_fails_fast_without_retry(self):
+        client = make_client()
+        error = urllib.error.URLError("ssl handshake failed")
+        with patch("urllib.request.urlopen", side_effect=error) as mock_urlopen, \
+                patch("time.sleep") as mock_sleep:
+            with self.assertRaises(OllamaError):
+                client._request("/api/chat", {})
+        self.assertEqual(mock_urlopen.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    def test_http_error_surfaces_response_body(self):
+        """HTTPError subclasses URLError, so its handler must be checked
+        first or the actual API error body never reaches the caller."""
+        client = make_client()
+        http_error = urllib.error.HTTPError(
+            "http://x", 400, "Bad Request", {}, io.BytesIO(b'{"error": "bad model"}')
+        )
+        with patch("urllib.request.urlopen", side_effect=http_error):
+            with self.assertRaises(OllamaError) as ctx:
+                client._request("/api/chat", {})
+        self.assertIn("bad model", str(ctx.exception))
+        self.assertIn("400", str(ctx.exception))
 
 
 if __name__ == "__main__":
