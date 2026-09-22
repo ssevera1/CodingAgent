@@ -2,6 +2,7 @@
 
 import json
 import socket
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -39,6 +40,7 @@ class WebSearchTool(BaseTool):
     def __init__(self, config=None):
         self.timeout = config.request_timeout if config else 15
         self.user_agent = config.user_agent if config else "CodeAgent/1.0"
+        self.max_retries = 2
 
     def execute(self, query: str, max_results: int = 5, **kw) -> ToolResult:
         try:
@@ -54,8 +56,7 @@ class WebSearchTool(BaseTool):
                 },
             )
 
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
-            body = resp.read().decode("utf-8", errors="replace")
+            body = self._fetch_with_retry(req)
 
             # Parse results from HTML
             results = self._parse_ddg_html(body, max_results)
@@ -77,6 +78,18 @@ class WebSearchTool(BaseTool):
             return ToolResult(False, "", f"Search failed (network error): {e}")
         except Exception as e:
             return ToolResult(False, "", f"Search failed: {e}")
+
+    def _fetch_with_retry(self, req: urllib.request.Request) -> str:
+        """Fetch URL with retry logic on transient failures."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = urllib.request.urlopen(req, timeout=self.timeout)
+                return resp.read().decode("utf-8", errors="replace")
+            except (socket.timeout, urllib.error.URLError) as e:
+                if attempt < self.max_retries:
+                    time.sleep(1 + attempt)
+                    continue
+                raise
 
     def _parse_ddg_html(self, body: str, max_results: int) -> list[dict]:
         """Parse DuckDuckGo HTML results."""
@@ -142,6 +155,7 @@ class WebFetchTool(BaseTool):
     def __init__(self, config=None):
         self.timeout = config.request_timeout if config else 15
         self.user_agent = config.user_agent if config else "CodeAgent/1.0"
+        self.max_retries = 2
 
     def execute(self, url: str, max_length: int = 10000, **kw) -> ToolResult:
         try:
@@ -156,10 +170,9 @@ class WebFetchTool(BaseTool):
                 },
             )
 
+            body = self._fetch_with_retry(req)
             resp = urllib.request.urlopen(req, timeout=self.timeout)
             content_type = resp.headers.get("Content-Type", "")
-
-            body = resp.read().decode("utf-8", errors="replace")
 
             if "text/html" in content_type:
                 text = self._html_to_text(body)
@@ -179,13 +192,25 @@ class WebFetchTool(BaseTool):
         except Exception as e:
             return ToolResult(False, "", f"Failed to fetch: {e}")
 
+    def _fetch_with_retry(self, req: urllib.request.Request) -> str:
+        """Fetch URL with retry logic on transient failures."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = urllib.request.urlopen(req, timeout=self.timeout)
+                return resp.read().decode("utf-8", errors="replace")
+            except (socket.timeout, urllib.error.URLError) as e:
+                if attempt < self.max_retries:
+                    time.sleep(1 + attempt)
+                    continue
+                raise
+
     def _html_to_text(self, html_content: str) -> str:
         """Basic HTML to text conversion."""
         # Remove script and style elements
         text = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL)
         text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
         # Convert common tags
-        text = re.sub(r"<br\s*/?>", "\n", text)
+        text = re.sub(r"<br\s*/?>\n", text)
         text = re.sub(r"</(p|div|h[1-6]|li|tr)>", "\n", text)
         text = re.sub(r"<h([1-6])[^>]*>", lambda m: "\n" + "#" * int(m.group(1)) + " ", text)
         text = re.sub(r"<li[^>]*>", "  - ", text)
