@@ -2,6 +2,7 @@
 
 import json
 import socket
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -10,6 +11,29 @@ import html
 from typing import Optional
 
 from agent.tools.base import BaseTool, ToolResult
+
+
+def _fetch_with_retry(
+    req: urllib.request.Request, timeout: float, max_retries: int
+) -> tuple[str, str]:
+    """Fetch a URL with retry on transient network failures.
+
+    Returns (body, content_type). HTTP error responses (4xx/5xx) are not
+    retried - they're permanent failures, so retrying just wastes time.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            body = resp.read().decode("utf-8", errors="replace")
+            return body, resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError:
+            raise
+        except (socket.timeout, urllib.error.URLError):
+            if attempt < max_retries:
+                time.sleep(1 + attempt)
+                continue
+            raise
+    raise AssertionError("unreachable")
 
 
 class WebSearchTool(BaseTool):
@@ -39,6 +63,7 @@ class WebSearchTool(BaseTool):
     def __init__(self, config=None):
         self.timeout = config.request_timeout if config else 15
         self.user_agent = config.user_agent if config else "CodeAgent/1.0"
+        self.max_retries = 2
 
     def execute(self, query: str, max_results: int = 5, **kw) -> ToolResult:
         try:
@@ -54,8 +79,7 @@ class WebSearchTool(BaseTool):
                 },
             )
 
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
-            body = resp.read().decode("utf-8", errors="replace")
+            body, _ = _fetch_with_retry(req, self.timeout, self.max_retries)
 
             # Parse results from HTML
             results = self._parse_ddg_html(body, max_results)
@@ -142,6 +166,7 @@ class WebFetchTool(BaseTool):
     def __init__(self, config=None):
         self.timeout = config.request_timeout if config else 15
         self.user_agent = config.user_agent if config else "CodeAgent/1.0"
+        self.max_retries = 2
 
     def execute(self, url: str, max_length: int = 10000, **kw) -> ToolResult:
         try:
@@ -156,10 +181,7 @@ class WebFetchTool(BaseTool):
                 },
             )
 
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
-            content_type = resp.headers.get("Content-Type", "")
-
-            body = resp.read().decode("utf-8", errors="replace")
+            body, content_type = _fetch_with_retry(req, self.timeout, self.max_retries)
 
             if "text/html" in content_type:
                 text = self._html_to_text(body)
