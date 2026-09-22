@@ -13,6 +13,29 @@ from typing import Optional
 from agent.tools.base import BaseTool, ToolResult
 
 
+def _fetch_with_retry(
+    req: urllib.request.Request, timeout: float, max_retries: int
+) -> tuple[str, str]:
+    """Fetch a URL with retry on transient network failures.
+
+    Returns (body, content_type). HTTP error responses (4xx/5xx) are not
+    retried - they're permanent failures, so retrying just wastes time.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            body = resp.read().decode("utf-8", errors="replace")
+            return body, resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError:
+            raise
+        except (socket.timeout, urllib.error.URLError):
+            if attempt < max_retries:
+                time.sleep(1 + attempt)
+                continue
+            raise
+    raise AssertionError("unreachable")
+
+
 class WebSearchTool(BaseTool):
     """Search the web using DuckDuckGo."""
 
@@ -56,7 +79,7 @@ class WebSearchTool(BaseTool):
                 },
             )
 
-            body = self._fetch_with_retry(req)
+            body, _ = _fetch_with_retry(req, self.timeout, self.max_retries)
 
             # Parse results from HTML
             results = self._parse_ddg_html(body, max_results)
@@ -78,18 +101,6 @@ class WebSearchTool(BaseTool):
             return ToolResult(False, "", f"Search failed (network error): {e}")
         except Exception as e:
             return ToolResult(False, "", f"Search failed: {e}")
-
-    def _fetch_with_retry(self, req: urllib.request.Request) -> str:
-        """Fetch URL with retry logic on transient failures."""
-        for attempt in range(self.max_retries + 1):
-            try:
-                resp = urllib.request.urlopen(req, timeout=self.timeout)
-                return resp.read().decode("utf-8", errors="replace")
-            except (socket.timeout, urllib.error.URLError) as e:
-                if attempt < self.max_retries:
-                    time.sleep(1 + attempt)
-                    continue
-                raise
 
     def _parse_ddg_html(self, body: str, max_results: int) -> list[dict]:
         """Parse DuckDuckGo HTML results."""
@@ -170,9 +181,7 @@ class WebFetchTool(BaseTool):
                 },
             )
 
-            body = self._fetch_with_retry(req)
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
-            content_type = resp.headers.get("Content-Type", "")
+            body, content_type = _fetch_with_retry(req, self.timeout, self.max_retries)
 
             if "text/html" in content_type:
                 text = self._html_to_text(body)
@@ -192,25 +201,13 @@ class WebFetchTool(BaseTool):
         except Exception as e:
             return ToolResult(False, "", f"Failed to fetch: {e}")
 
-    def _fetch_with_retry(self, req: urllib.request.Request) -> str:
-        """Fetch URL with retry logic on transient failures."""
-        for attempt in range(self.max_retries + 1):
-            try:
-                resp = urllib.request.urlopen(req, timeout=self.timeout)
-                return resp.read().decode("utf-8", errors="replace")
-            except (socket.timeout, urllib.error.URLError) as e:
-                if attempt < self.max_retries:
-                    time.sleep(1 + attempt)
-                    continue
-                raise
-
     def _html_to_text(self, html_content: str) -> str:
         """Basic HTML to text conversion."""
         # Remove script and style elements
         text = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL)
         text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
         # Convert common tags
-        text = re.sub(r"<br\s*/?>\n", text)
+        text = re.sub(r"<br\s*/?>", "\n", text)
         text = re.sub(r"</(p|div|h[1-6]|li|tr)>", "\n", text)
         text = re.sub(r"<h([1-6])[^>]*>", lambda m: "\n" + "#" * int(m.group(1)) + " ", text)
         text = re.sub(r"<li[^>]*>", "  - ", text)
