@@ -14,6 +14,11 @@ name: Claude Address Review
 # Scope is deliberately narrow: only the bot's own improve/* branches, and
 # only reviews written by claude[bot]. Widen the `if` below to cover human
 # reviews or other branches once you trust the behaviour.
+#
+# If the fix pass agrees with the reviewer so completely that it reverts the
+# whole proposal, the PR is left with an empty net diff. The final step closes
+# it in that case rather than sending an empty PR back for another review
+# round and then waiting on the janitor.
 
 on:
   pull_request_review:
@@ -187,3 +192,29 @@ jobs:
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Close the PR if the fix pass left an empty net diff
+        # When Claude agrees with every point and reverts the whole proposal,
+        # what remains is a PR whose title describes work that is no longer in
+        # the tree. Merging that misleads anyone reading history, and another
+        # review round is wasted budget (seen 2026-09-25 on ToneAnalyzer #9,
+        # Autonomous-SOC-Security-Agent #34 and Vulnerability-Scanner #9, each
+        # of which then sat until closed by hand). Close it here instead.
+        #
+        # GITHUB_TOKEN on purpose: closing must not trigger further workflows.
+        # Skipped automatically when the fix step itself failed.
+        if: steps.budget.outputs.proceed == 'true' && env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ steps.budget.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          base=$(gh api "repos/${{ github.repository }}/pulls/${PR}" --jq .base.ref)
+          git fetch -q origin "$base"
+          if ! git diff --quiet "origin/${base}...HEAD"; then
+            echo "Net diff against ${base} is non-empty; leaving PR #${PR} for re-review."
+            exit 0
+          fi
+          echo "Net diff against ${base} is empty; closing PR #${PR}."
+          gh pr close "$PR" -R "${{ github.repository }}" --comment "Closing: after the review was addressed, the net diff against \`${base}\` is empty. The fix pass agreed with the reviewer and reverted the whole proposal, so nothing is left to merge and the title no longer describes any change in the tree."
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/${HEAD_REF}"
