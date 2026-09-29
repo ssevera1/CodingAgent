@@ -64,6 +64,10 @@ class Conversation:
         # match, a write that prints nothing), so empty is allowed here.
         if content is None:
             raise ValueError("Tool result content cannot be None")
+        if not tool_call_id or not tool_call_id.strip():
+            raise ValueError("Tool result tool_call_id cannot be None or empty")
+        if not name or not name.strip():
+            raise ValueError("Tool result name cannot be None or empty")
         self.messages.append(
             Message(role="tool", content=content, tool_call_id=tool_call_id, name=name)
         )
