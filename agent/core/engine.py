@@ -110,10 +110,12 @@ class AgentEngine:
                     print(display_content)
 
                 for tc in tool_calls_from_api:
-                    func = tc.get("function", {})
-                    name = func.get("name", "unknown")
-                    args = func.get("arguments", {})
-                    self._execute_and_record_tool(name, args, tc.get("id", name))
+                    func = tc.get("function", {}) or {}
+                    # `or` guards a present-but-null key, which would
+                    # otherwise reach add_tool_result as None/"".
+                    name = func.get("name") or "unknown"
+                    args = func.get("arguments") or {}
+                    self._execute_and_record_tool(name, args, tc.get("id") or name)
 
             elif tool_calls_from_content:
                 # Handle tool calls from content
