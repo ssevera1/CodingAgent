@@ -249,3 +249,54 @@ class TestProcessMessageEmptyResponses(unittest.TestCase):
         self.assertEqual(result, "All done.")
         roles = [m.role for m in engine.conversation.messages]
         self.assertIn("tool", roles)
+
+    def test_native_tool_call_with_null_id_does_not_crash(self):
+        """A present-but-null "id" must not reach add_tool_result as None."""
+        engine = self._engine()
+        responses = [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": None,
+                            "function": {"name": "list_directory", "arguments": {}},
+                        }
+                    ],
+                }
+            },
+            {"message": {"content": "All done."}},
+        ]
+        with patch.object(engine, "_call_llm", side_effect=responses):
+            result = engine.process_message("list the files")
+
+        self.assertEqual(result, "All done.")
+        tool_messages = [m for m in engine.conversation.messages if m.role == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertTrue(tool_messages[0].tool_call_id)
+
+    def test_native_tool_call_with_null_name_does_not_crash(self):
+        """A present-but-null function "name" must not reach add_tool_result as None."""
+        engine = self._engine()
+        responses = [
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "function": {"name": None, "arguments": {}},
+                        }
+                    ],
+                }
+            },
+            {"message": {"content": "All done."}},
+        ]
+        with patch.object(engine, "_call_llm", side_effect=responses):
+            result = engine.process_message("list the files")
+
+        self.assertEqual(result, "All done.")
+        tool_messages = [m for m in engine.conversation.messages if m.role == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0].name, "unknown")
+        self.assertIn("Unknown tool", tool_messages[0].content)
