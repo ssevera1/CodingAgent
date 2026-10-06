@@ -55,6 +55,8 @@ class Conversation:
         # Only None indicates a genuine caller bug.
         if content is None:
             raise ValueError("Assistant message content cannot be None")
+        if isinstance(content, str) and not content.strip() and not tool_calls:
+            raise ValueError("Assistant message content cannot be empty without tool calls")
         self.messages.append(
             Message(role="assistant", content=content, tool_calls=tool_calls)
         )
