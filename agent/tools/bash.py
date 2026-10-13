@@ -24,6 +24,16 @@ DANGEROUS_PATTERNS = [
     "git clean -f", "git checkout .",
 ]
 
+# Patterns that indicate attempts to read sensitive files or exfiltrate secrets
+SENSITIVE_PATTERNS = [
+    "cat /etc/passwd", "cat /etc/shadow", "cat ~/.ssh",
+    "cat ~/.aws", "cat ~/.config", "env | grep -i key",
+    "env | grep -i secret", "env | grep -i token",
+    "printenv", "declare -p", "set | grep -i",
+    "/proc/self/environ", "AWS_SECRET", "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY", "exfiltrate", "ex-filtrate",
+]
+
 # Minimum timeout to prevent accidental no-timeout execution
 MIN_TIMEOUT = 1
 DEFAULT_TIMEOUT = 120
@@ -71,6 +81,14 @@ class BashTool(BaseTool):
         cmd_lower = command.lower()
         return any(p in cmd_lower for p in DANGEROUS_PATTERNS)
 
+    def _is_sensitive(self, command: str) -> Optional[str]:
+        """Check if command attempts to read sensitive files or exfiltrate secrets."""
+        cmd_lower = command.lower()
+        for pattern in SENSITIVE_PATTERNS:
+            if pattern.lower() in cmd_lower:
+                return f"Blocked: command attempts to access sensitive data or exfiltrate secrets"
+        return None
+
     def _sanitize_timeout(self, timeout: Optional[int]) -> int:
         """Validate and enforce timeout bounds."""
         if timeout is None:
@@ -84,6 +102,10 @@ class BashTool(BaseTool):
         blocked = self._is_blocked(command)
         if blocked:
             return ToolResult(False, "", blocked)
+
+        sensitive = self._is_sensitive(command)
+        if sensitive:
+            return ToolResult(False, "", sensitive)
 
         if self._is_dangerous(command) and not self.auto_approve:
             return ToolResult(
