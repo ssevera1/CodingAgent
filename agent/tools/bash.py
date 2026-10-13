@@ -1,6 +1,7 @@
 """Bash/shell command execution tool."""
 
 import os
+import re
 import subprocess
 import shlex
 import platform
@@ -24,15 +25,31 @@ DANGEROUS_PATTERNS = [
     "git clean -f", "git checkout .",
 ]
 
-# Patterns that indicate attempts to read sensitive files or exfiltrate secrets
-SENSITIVE_PATTERNS = [
-    "cat /etc/passwd", "cat /etc/shadow", "cat ~/.ssh",
-    "cat ~/.aws", "cat ~/.config", "env | grep -i key",
-    "env | grep -i secret", "env | grep -i token",
-    "printenv", "declare -p", "set | grep -i",
-    "/proc/self/environ", "AWS_SECRET", "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY", "exfiltrate", "ex-filtrate",
+# Commands whose argv[0] reads file contents (checked against SENSITIVE_FILE_PATTERNS)
+FILE_READ_COMMANDS = {"cat", "less", "more", "head", "tail", "vim", "vi", "nano", "strings"}
+
+# Path fragments that identify secret-bearing files, matched against the
+# normalized/expanded path argument rather than the raw command text
+SENSITIVE_FILE_PATTERNS = [
+    re.compile(r"/etc/passwd$"),
+    re.compile(r"/etc/shadow$"),
+    re.compile(r"\.ssh(/|$)"),
+    re.compile(r"\.aws(/|$)"),
+    re.compile(r"\.netrc$"),
+    re.compile(r"id_rsa$"),
+    re.compile(r"id_ed25519$"),
+    re.compile(r"/proc/(?:self|\d+)/environ$"),
 ]
+
+# Commands that print environment variables; sensitive only when dumping
+# everything (no specific name given) or when the requested name looks secret
+ENV_DUMP_COMMANDS = {"env", "printenv", "set", "declare", "export"}
+
+# argv[0] for commands that can print a variable's value directly
+ENV_PRINT_COMMANDS = {"echo", "printf"}
+
+SECRET_NAME_RE = re.compile(r"(API[_-]?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)", re.IGNORECASE)
+VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
 
 # Minimum timeout to prevent accidental no-timeout execution
 MIN_TIMEOUT = 1
@@ -82,11 +99,50 @@ class BashTool(BaseTool):
         return any(p in cmd_lower for p in DANGEROUS_PATTERNS)
 
     def _is_sensitive(self, command: str) -> Optional[str]:
-        """Check if command attempts to read sensitive files or exfiltrate secrets."""
-        cmd_lower = command.lower()
-        for pattern in SENSITIVE_PATTERNS:
-            if pattern.lower() in cmd_lower:
-                return f"Blocked: command attempts to access sensitive data or exfiltrate secrets"
+        """Check if command reads a sensitive file or prints a secret-looking
+        environment variable. Operates on parsed argv per shell segment so
+        that commands merely mentioning a secret's name (e.g. grepping for
+        it in source) are not flagged, only commands structured to read or
+        print one.
+        """
+        for segment in re.split(r"\|\||&&|[;|\n]", command):
+            segment = segment.strip()
+            if not segment:
+                continue
+            try:
+                tokens = shlex.split(segment)
+            except ValueError:
+                continue
+            if not tokens:
+                continue
+
+            argv0 = os.path.basename(tokens[0])
+            args = tokens[1:]
+
+            if argv0 in FILE_READ_COMMANDS:
+                for arg in args:
+                    if arg.startswith("-"):
+                        continue
+                    expanded = os.path.normpath(
+                        os.path.expanduser(os.path.expandvars(arg))
+                    )
+                    for pat in SENSITIVE_FILE_PATTERNS:
+                        if pat.search(expanded):
+                            return f"Blocked: '{segment}' reads sensitive file '{arg}'"
+
+            if argv0 in ENV_DUMP_COMMANDS:
+                named = [a for a in args if not a.startswith("-")]
+                if not named or any(SECRET_NAME_RE.search(a) for a in named):
+                    return f"Blocked: '{segment}' dumps environment variables"
+
+            if argv0 in ENV_PRINT_COMMANDS:
+                for arg in args:
+                    for var_name in VAR_REF_RE.findall(arg):
+                        if SECRET_NAME_RE.search(var_name):
+                            return (
+                                f"Blocked: '{segment}' prints the value of "
+                                f"'{var_name}'"
+                            )
         return None
 
     def _sanitize_timeout(self, timeout: Optional[int]) -> int:
@@ -104,8 +160,12 @@ class BashTool(BaseTool):
             return ToolResult(False, "", blocked)
 
         sensitive = self._is_sensitive(command)
-        if sensitive:
-            return ToolResult(False, "", sensitive)
+        if sensitive and not self.auto_approve:
+            return ToolResult(
+                False, "",
+                f"{sensitive}\n"
+                "Set auto_approve_bash=true in config or confirm interactively."
+            )
 
         if self._is_dangerous(command) and not self.auto_approve:
             return ToolResult(

@@ -239,6 +239,54 @@ class TestBashTool(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("timed out", result.error)
 
+    def test_sensitive_file_reads_blocked(self):
+        guarded_tool = BashTool(self.tmpdir, auto_approve=False)
+        for cmd in (
+            "cat /etc/passwd",
+            "cat /etc/shadow",
+            "head /etc/shadow",
+            "less /etc/shadow",
+            "cat /etc//shadow",
+            "cat ~/.ssh/id_rsa",
+            "cat $HOME/.ssh/id_rsa",
+            "cd ~/.ssh && cat id_rsa",
+            "cat /proc/self/environ",
+        ):
+            result = guarded_tool.execute(command=cmd)
+            self.assertFalse(result.success, cmd)
+            self.assertIn("sensitive", result.error.lower(), cmd)
+
+    def test_env_dumps_blocked(self):
+        guarded_tool = BashTool(self.tmpdir, auto_approve=False)
+        for cmd in (
+            "env",
+            "env|grep key",
+            "printenv",
+            "declare -p",
+            "printenv ANTHROPIC_API_KEY",
+            "echo $ANTHROPIC_API_KEY",
+        ):
+            result = guarded_tool.execute(command=cmd)
+            self.assertFalse(result.success, cmd)
+
+    def test_sensitive_checks_overridable_with_auto_approve(self):
+        auto_tool = BashTool(self.tmpdir, auto_approve=True)
+        result = auto_tool.execute(command="echo $ANTHROPIC_API_KEY")
+        self.assertTrue(result.success)
+
+    def test_legitimate_commands_not_blocked(self):
+        guarded_tool = BashTool(self.tmpdir, auto_approve=False)
+        for cmd in (
+            "grep -rn ANTHROPIC_API_KEY scripts/",
+            "printenv PATH",
+            "cat ~/.config/nvim/init.lua",
+            "echo hello",
+            "ls -la",
+        ):
+            result = guarded_tool.execute(command=cmd)
+            self.assertNotIn("sensitive", (result.error or "").lower(), cmd)
+            self.assertNotIn("dumps environment", (result.error or ""), cmd)
+
 
 class TestConversation(unittest.TestCase):
     def test_basic_conversation(self):
