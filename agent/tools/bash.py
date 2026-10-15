@@ -104,6 +104,11 @@ class BashTool(BaseTool):
         that commands merely mentioning a secret's name (e.g. grepping for
         it in source) are not flagged, only commands structured to read or
         print one.
+
+        This is a best-effort guard against accidental or injected leakage,
+        not a sandbox: only top-level segments are inspected, so command
+        substitution, backticks, and interpreter wrappers such as
+        ``bash -c`` or ``python -c`` are not examined.
         """
         for segment in re.split(r"\|\||&&|[;|\n]", command):
             segment = segment.strip()
@@ -112,7 +117,10 @@ class BashTool(BaseTool):
             try:
                 tokens = shlex.split(segment)
             except ValueError:
-                continue
+                # Unbalanced quotes (often from the split above cutting
+                # inside a quoted "|"). Fall back to whitespace tokens so
+                # the segment is still checked rather than skipped.
+                tokens = segment.split()
             if not tokens:
                 continue
 
@@ -132,7 +140,13 @@ class BashTool(BaseTool):
 
             if argv0 in ENV_DUMP_COMMANDS:
                 named = [a for a in args if not a.startswith("-")]
-                if not named or any(SECRET_NAME_RE.search(a) for a in named):
+                # Only bare `set` prints variables; `set -e`, `set -x` and
+                # `set -o ...` toggle shell options and print nothing.
+                if argv0 == "set":
+                    dumps = not args
+                else:
+                    dumps = not named
+                if dumps or any(SECRET_NAME_RE.search(a) for a in named):
                     return f"Blocked: '{segment}' dumps environment variables"
 
             if argv0 in ENV_PRINT_COMMANDS:
@@ -164,7 +178,9 @@ class BashTool(BaseTool):
             return ToolResult(
                 False, "",
                 f"{sensitive}\n"
-                "Set auto_approve_bash=true in config or confirm interactively."
+                "Interactive confirmation does not lift this check; only "
+                "auto_approve_bash=true in config skips it, and that disables "
+                "confirmation for every bash command."
             )
 
         if self._is_dangerous(command) and not self.auto_approve:

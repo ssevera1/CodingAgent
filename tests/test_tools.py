@@ -251,6 +251,7 @@ class TestBashTool(unittest.TestCase):
             "cat $HOME/.ssh/id_rsa",
             "cd ~/.ssh && cat id_rsa",
             "cat /proc/self/environ",
+            'cat /etc/shadow "|"',
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertFalse(result.success, cmd)
@@ -262,6 +263,7 @@ class TestBashTool(unittest.TestCase):
             "env",
             "env|grep key",
             "printenv",
+            "set",
             "declare -p",
             "printenv ANTHROPIC_API_KEY",
             "echo $ANTHROPIC_API_KEY",
@@ -282,6 +284,10 @@ class TestBashTool(unittest.TestCase):
             "cat ~/.config/nvim/init.lua",
             "echo hello",
             "ls -la",
+            "set -e; echo ok",
+            "set -x",
+            "set -eu",
+            "set -o pipefail",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertNotIn("sensitive", (result.error or "").lower(), cmd)
