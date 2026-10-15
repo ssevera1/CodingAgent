@@ -146,6 +146,15 @@ def _unwrap_env(tokens: list) -> tuple:
     return ("cmd", rest) if rest else ("dump", None)
 
 
+# Commands that run another command given later in their argv. Their own
+# options vary too much to parse, so the guard checks from the first token
+# that is itself a checked command.
+WRAPPER_COMMANDS = {
+    "command", "exec", "builtin", "nice", "nohup", "time", "timeout", "stdbuf",
+    "sudo", "doas", "xargs", "ionice", "setsid", "chrt", "taskset", "unbuffer",
+}
+
+
 # Minimum timeout to prevent accidental no-timeout execution
 MIN_TIMEOUT = 1
 DEFAULT_TIMEOUT = 120
@@ -224,7 +233,24 @@ class BashTool(BaseTool):
 
             # `env [opts] [NAME=value ...] cmd` runs cmd, so check cmd
             # itself; with no cmd it prints every variable.
-            while os.path.basename(tokens[0]) == "env":
+            checked = (
+                FILE_READ_COMMANDS | ENV_DUMP_COMMANDS | ENV_PRINT_COMMANDS
+                | TRACING_SHELLS | WRAPPER_COMMANDS | {"env"}
+            )
+            while True:
+                head = os.path.basename(tokens[0])
+                if head in WRAPPER_COMMANDS:
+                    inner = next(
+                        (i for i, t in enumerate(tokens[1:], start=1)
+                         if os.path.basename(t) in checked),
+                        None,
+                    )
+                    if inner is None:
+                        break
+                    tokens = tokens[inner:]
+                    continue
+                if head != "env":
+                    break
                 kind, wrapped = _unwrap_env(tokens)
                 if kind == "dump":
                     return f"Blocked: '{segment}' dumps environment variables"

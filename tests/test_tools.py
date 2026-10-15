@@ -255,6 +255,8 @@ class TestBashTool(unittest.TestCase):
             "grep . /etc/shadow",
             "base64 ~/.ssh/id_rsa",
             "env FOO=1 cat ~/.ssh/id_rsa",
+            "nohup cat ~/.ssh/id_rsa",
+            "sudo -u root cat /etc/shadow",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertFalse(result.success, cmd)
@@ -283,6 +285,10 @@ class TestBashTool(unittest.TestCase):
             "env -- FOO=1 printenv",
             "env --made-up-option printenv",
             "env -Z printenv",
+            "command printenv",
+            "exec env",
+            "timeout 5 printenv ANTHROPIC_API_KEY",
+            "nice -n 5 env FOO=1 printenv",
             "declare -p",
             "printenv ANTHROPIC_API_KEY",
             "echo $ANTHROPIC_API_KEY",
@@ -325,6 +331,8 @@ class TestBashTool(unittest.TestCase):
             "env GITHUB_TOKEN=xxx true",
             "env -i PATH=/usr/bin true",
             "env -u FOO true",
+            "timeout 5 echo ok",
+            "time ls -la",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertNotIn("sensitive", (result.error or "").lower(), cmd)
