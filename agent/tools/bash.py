@@ -73,31 +73,77 @@ def _enables_xtrace(argv0: str, args: list) -> bool:
     return False
 
 
-# env options that take a separate argument (`env -u NAME`, `env -C DIR`).
-# Covers GNU and BSD/macOS env (-P altpath); missing one here would let
-# the option's argument be taken for the wrapped command.
-ENV_OPTS_WITH_ARG = {
-    "-u", "--unset", "-C", "--chdir", "-S", "--split-string",
-    "-a", "--argv0", "-P",
-}
+# env's own options, GNU and BSD/macOS. Short options in ENV_SHORT_WITH_ARG
+# take an argument (the rest of the cluster, or the next token).
+ENV_SHORT_FLAGS = set("iv0")
+ENV_SHORT_WITH_ARG = set("uCSaPLU")
+ENV_LONG_FLAGS = {"--ignore-environment", "--null", "--debug", "--list-signal-handling"}
+ENV_LONG_WITH_ARG = {"--unset", "--chdir", "--split-string", "--argv0"}
+# Signal options take an optional argument, only in the attached form.
+ENV_LONG_OPTIONAL_ARG = {"--block-signal", "--default-signal", "--ignore-signal"}
 
 
-def _unwrap_env(tokens: list) -> Optional[list]:
-    """Strip `env`'s own options and NAME=value assignments.
+def _unwrap_env(tokens: list) -> tuple:
+    """Parse `env [opts] [NAME=value ...] [cmd ...]` the way getopt does.
 
-    Returns the wrapped command's tokens, or None when nothing is left,
-    in which case `env` prints the whole environment.
+    Returns ("cmd", tokens) for the wrapped command, ("dump", None) when no
+    command is left (env then prints every variable), or ("unknown", None)
+    for an option this parser does not recognise. Callers block both of
+    the latter: failing closed is the point of the check.
     """
-    i = 1
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok in ENV_OPTS_WITH_ARG:
-            i += 2
-        elif tok.startswith("-") or "=" in tok:
-            i += 1
-        else:
-            return tokens[i:]
-    return None
+    rest = list(tokens[1:])
+    while rest:
+        tok = rest.pop(0)
+        if tok == "--":
+            break
+        if tok == "-":
+            continue  # same as -i
+        if tok.startswith("--"):
+            name, eq, _ = tok.partition("=")
+            if name == "--split-string":
+                arg = tok[len(name) + 1:] if eq else (rest.pop(0) if rest else "")
+                try:
+                    rest = shlex.split(arg) + rest
+                except ValueError:
+                    return ("unknown", None)
+            elif name in ENV_LONG_WITH_ARG:
+                if not eq:
+                    if not rest:
+                        return ("unknown", None)
+                    rest.pop(0)
+            elif name in ENV_LONG_FLAGS or name in ENV_LONG_OPTIONAL_ARG:
+                pass
+            else:
+                return ("unknown", None)
+            continue
+        if tok.startswith("-"):
+            for pos, ch in enumerate(tok[1:], start=1):
+                if ch in ENV_SHORT_FLAGS:
+                    continue
+                if ch in ENV_SHORT_WITH_ARG:
+                    attached = tok[pos + 1:]
+                    if attached:
+                        arg = attached
+                    elif rest:
+                        arg = rest.pop(0)
+                    else:
+                        return ("unknown", None)
+                    if ch == "S":
+                        # -S splits its string into further env arguments.
+                        try:
+                            rest = shlex.split(arg) + rest
+                        except ValueError:
+                            return ("unknown", None)
+                    break
+                return ("unknown", None)
+            continue
+        if "=" in tok:
+            continue
+        return ("cmd", [tok] + rest)
+    # Arguments after "--" are the command, except leading assignments.
+    while rest and "=" in rest[0]:
+        rest.pop(0)
+    return ("cmd", rest) if rest else ("dump", None)
 
 
 # Minimum timeout to prevent accidental no-timeout execution
@@ -179,9 +225,14 @@ class BashTool(BaseTool):
             # `env [opts] [NAME=value ...] cmd` runs cmd, so check cmd
             # itself; with no cmd it prints every variable.
             while os.path.basename(tokens[0]) == "env":
-                wrapped = _unwrap_env(tokens)
-                if wrapped is None:
+                kind, wrapped = _unwrap_env(tokens)
+                if kind == "dump":
                     return f"Blocked: '{segment}' dumps environment variables"
+                if kind == "unknown":
+                    return (
+                        f"Blocked: '{segment}' uses env options this guard "
+                        "cannot parse, so it may dump environment variables"
+                    )
                 tokens = wrapped
 
             argv0 = os.path.basename(tokens[0])

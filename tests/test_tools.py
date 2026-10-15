@@ -273,6 +273,16 @@ class TestBashTool(unittest.TestCase):
             "env -u HOME printenv ANTHROPIC_API_KEY",
             "env -P /bin printenv",
             "env -a sh printenv",
+            "env -iu FOO printenv",
+            "env -uFOO printenv",
+            "env --unset FOO printenv",
+            "env --unset=FOO printenv",
+            "env -S 'printenv ANTHROPIC_API_KEY'",
+            "env -S'FOO=1 printenv'",
+            "env --split-string='printenv'",
+            "env -- FOO=1 printenv",
+            "env --made-up-option printenv",
+            "env -Z printenv",
             "declare -p",
             "printenv ANTHROPIC_API_KEY",
             "echo $ANTHROPIC_API_KEY",
@@ -313,6 +323,8 @@ class TestBashTool(unittest.TestCase):
             "set -o pipefail",
             "export ANTHROPIC_API_KEY=sk-test",
             "env GITHUB_TOKEN=xxx true",
+            "env -i PATH=/usr/bin true",
+            "env -u FOO true",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertNotIn("sensitive", (result.error or "").lower(), cmd)
