@@ -73,8 +73,13 @@ def _enables_xtrace(argv0: str, args: list) -> bool:
     return False
 
 
-# env options that take a separate argument (`env -u NAME`, `env -C DIR`)
-ENV_OPTS_WITH_ARG = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+# env options that take a separate argument (`env -u NAME`, `env -C DIR`).
+# Covers GNU and BSD/macOS env (-P altpath); missing one here would let
+# the option's argument be taken for the wrapped command.
+ENV_OPTS_WITH_ARG = {
+    "-u", "--unset", "-C", "--chdir", "-S", "--split-string",
+    "-a", "--argv0", "-P",
+}
 
 
 def _unwrap_env(tokens: list) -> Optional[list]:

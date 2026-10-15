@@ -271,6 +271,8 @@ class TestBashTool(unittest.TestCase):
             "env -i FOO=1",
             "env FOO=1 printenv",
             "env -u HOME printenv ANTHROPIC_API_KEY",
+            "env -P /bin printenv",
+            "env -a sh printenv",
             "declare -p",
             "printenv ANTHROPIC_API_KEY",
             "echo $ANTHROPIC_API_KEY",
