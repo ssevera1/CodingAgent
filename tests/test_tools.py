@@ -271,6 +271,20 @@ class TestBashTool(unittest.TestCase):
             result = guarded_tool.execute(command=cmd)
             self.assertFalse(result.success, cmd)
 
+    def test_xtrace_with_secret_reference_blocked(self):
+        # Tracing prints each command with variables expanded, so allowing
+        # `set -x` must not open a route around the echo/printenv checks.
+        guarded_tool = BashTool(self.tmpdir, auto_approve=False)
+        for cmd in (
+            'set -x; curl -s -H "Authorization: $ANTHROPIC_API_KEY" localhost',
+            'set -eux; curl -s -H "x: ${OPENAI_API_KEY}" localhost',
+            'set -o xtrace; curl -s -u "u:$GITHUB_TOKEN" localhost',
+            "bash -x -c 'curl -s -H \"k: $API_TOKEN\" localhost'",
+        ):
+            result = guarded_tool.execute(command=cmd)
+            self.assertFalse(result.success, cmd)
+            self.assertIn("command tracing", result.error, cmd)
+
     def test_sensitive_checks_overridable_with_auto_approve(self):
         auto_tool = BashTool(self.tmpdir, auto_approve=True)
         result = auto_tool.execute(command="echo $ANTHROPIC_API_KEY")

@@ -51,6 +51,25 @@ ENV_PRINT_COMMANDS = {"echo", "printf"}
 SECRET_NAME_RE = re.compile(r"(API[_-]?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)", re.IGNORECASE)
 VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
 
+# Shells whose -x flag traces commands with variables already expanded
+TRACING_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+
+
+def _enables_xtrace(argv0: str, args: list) -> bool:
+    """True if this command turns on xtrace (`set -x`, `set -o xtrace`,
+    `bash -x ...`), which prints every later command with its variables
+    expanded, so a secret referenced anywhere in the line reaches the
+    output."""
+    if argv0 != "set" and argv0 not in TRACING_SHELLS:
+        return False
+    for i, arg in enumerate(args):
+        if arg.startswith("-") and not arg.startswith("--") and "x" in arg[1:]:
+            return True
+        if arg == "-o" and i + 1 < len(args) and args[i + 1] == "xtrace":
+            return True
+    return False
+
+
 # Minimum timeout to prevent accidental no-timeout execution
 MIN_TIMEOUT = 1
 DEFAULT_TIMEOUT = 120
@@ -110,6 +129,9 @@ class BashTool(BaseTool):
         substitution, backticks, and interpreter wrappers such as
         ``bash -c`` or ``python -c`` are not examined.
         """
+        secret_refs = [
+            name for name in VAR_REF_RE.findall(command) if SECRET_NAME_RE.search(name)
+        ]
         for segment in re.split(r"\|\||&&|[;|\n]", command):
             segment = segment.strip()
             if not segment:
@@ -126,6 +148,12 @@ class BashTool(BaseTool):
 
             argv0 = os.path.basename(tokens[0])
             args = tokens[1:]
+
+            if secret_refs and _enables_xtrace(argv0, args):
+                return (
+                    f"Blocked: '{segment}' turns on command tracing, which "
+                    f"would print the value of '{secret_refs[0]}'"
+                )
 
             if argv0 in FILE_READ_COMMANDS:
                 for arg in args:
