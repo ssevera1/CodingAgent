@@ -26,7 +26,10 @@ DANGEROUS_PATTERNS = [
 ]
 
 # Commands whose argv[0] reads file contents (checked against SENSITIVE_FILE_PATTERNS)
-FILE_READ_COMMANDS = {"cat", "less", "more", "head", "tail", "vim", "vi", "nano", "strings"}
+FILE_READ_COMMANDS = {
+    "cat", "less", "more", "head", "tail", "vim", "vi", "nano", "strings",
+    "grep", "sort", "od", "xxd", "base64",
+}
 
 # Path fragments that identify secret-bearing files, matched against the
 # normalized/expanded path argument rather than the raw command text
@@ -168,13 +171,16 @@ class BashTool(BaseTool):
 
             if argv0 in ENV_DUMP_COMMANDS:
                 named = [a for a in args if not a.startswith("-")]
+                # NAME=value sets a variable (`export TOKEN=...`,
+                # `env TOKEN=x ./run.sh`); only bare names read one.
+                reads = [a for a in named if "=" not in a]
                 # Only bare `set` prints variables; `set -e`, `set -x` and
                 # `set -o ...` toggle shell options and print nothing.
                 if argv0 == "set":
                     dumps = not args
                 else:
                     dumps = not named
-                if dumps or any(SECRET_NAME_RE.search(a) for a in named):
+                if dumps or any(SECRET_NAME_RE.search(a) for a in reads):
                     return f"Blocked: '{segment}' dumps environment variables"
 
             if argv0 in ENV_PRINT_COMMANDS:

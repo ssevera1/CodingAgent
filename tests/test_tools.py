@@ -252,6 +252,8 @@ class TestBashTool(unittest.TestCase):
             "cd ~/.ssh && cat id_rsa",
             "cat /proc/self/environ",
             'cat /etc/shadow "|"',
+            "grep . /etc/shadow",
+            "base64 ~/.ssh/id_rsa",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertFalse(result.success, cmd)
@@ -302,6 +304,8 @@ class TestBashTool(unittest.TestCase):
             "set -x",
             "set -eu",
             "set -o pipefail",
+            "export ANTHROPIC_API_KEY=sk-test",
+            "env GITHUB_TOKEN=xxx true",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertNotIn("sensitive", (result.error or "").lower(), cmd)
