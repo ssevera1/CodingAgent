@@ -73,6 +73,28 @@ def _enables_xtrace(argv0: str, args: list) -> bool:
     return False
 
 
+# env options that take a separate argument (`env -u NAME`, `env -C DIR`)
+ENV_OPTS_WITH_ARG = {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}
+
+
+def _unwrap_env(tokens: list) -> Optional[list]:
+    """Strip `env`'s own options and NAME=value assignments.
+
+    Returns the wrapped command's tokens, or None when nothing is left,
+    in which case `env` prints the whole environment.
+    """
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ENV_OPTS_WITH_ARG:
+            i += 2
+        elif tok.startswith("-") or "=" in tok:
+            i += 1
+        else:
+            return tokens[i:]
+    return None
+
+
 # Minimum timeout to prevent accidental no-timeout execution
 MIN_TIMEOUT = 1
 DEFAULT_TIMEOUT = 120
@@ -148,6 +170,14 @@ class BashTool(BaseTool):
                 tokens = segment.split()
             if not tokens:
                 continue
+
+            # `env [opts] [NAME=value ...] cmd` runs cmd, so check cmd
+            # itself; with no cmd it prints every variable.
+            while os.path.basename(tokens[0]) == "env":
+                wrapped = _unwrap_env(tokens)
+                if wrapped is None:
+                    return f"Blocked: '{segment}' dumps environment variables"
+                tokens = wrapped
 
             argv0 = os.path.basename(tokens[0])
             args = tokens[1:]

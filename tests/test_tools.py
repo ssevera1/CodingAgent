@@ -254,6 +254,7 @@ class TestBashTool(unittest.TestCase):
             'cat /etc/shadow "|"',
             "grep . /etc/shadow",
             "base64 ~/.ssh/id_rsa",
+            "env FOO=1 cat ~/.ssh/id_rsa",
         ):
             result = guarded_tool.execute(command=cmd)
             self.assertFalse(result.success, cmd)
@@ -266,6 +267,10 @@ class TestBashTool(unittest.TestCase):
             "env|grep key",
             "printenv",
             "set",
+            "env FOO=1",
+            "env -i FOO=1",
+            "env FOO=1 printenv",
+            "env -u HOME printenv ANTHROPIC_API_KEY",
             "declare -p",
             "printenv ANTHROPIC_API_KEY",
             "echo $ANTHROPIC_API_KEY",
