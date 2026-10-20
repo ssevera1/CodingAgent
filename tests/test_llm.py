@@ -108,7 +108,7 @@ class TestStreamChat(unittest.TestCase):
         tool_calls = [{"function": {"name": "read_file", "arguments": {}}}]
         lines = stream_lines(
             [
-                {"message": {"role": "assistant", "tool_calls": tool_calls}},
+                {"message": {"role": "assistant", "tool_calls": tool_calls}, "done": False},
                 {"message": {"role": "assistant", "content": ""}, "done": True},
             ]
         )
@@ -122,8 +122,8 @@ class TestStreamChat(unittest.TestCase):
         client = make_client()
         lines = stream_lines(
             [
-                {"message": {"role": "assistant", "content": "he"}},
-                {"message": {"role": "assistant", "content": "llo"}},
+                {"message": {"role": "assistant", "content": "he"}, "done": False},
+                {"message": {"role": "assistant", "content": "llo"}, "done": False},
                 {"message": {"role": "assistant", "content": ""}, "done": True},
             ]
         )
@@ -137,7 +137,7 @@ class TestStreamChat(unittest.TestCase):
         client = make_client()
         lines = stream_lines(
             [
-                {"message": {"role": "assistant", "content": None}},
+                {"message": {"role": "assistant", "content": None}, "done": False},
                 {"message": {"role": "assistant", "content": "ok"}, "done": True},
             ]
         )
@@ -149,7 +149,9 @@ class TestStreamChat(unittest.TestCase):
 
     def test_non_string_content_raises(self):
         client = make_client()
-        lines = stream_lines([{"message": {"role": "assistant", "content": [1, 2]}}])
+        lines = stream_lines(
+            [{"message": {"role": "assistant", "content": [1, 2]}, "done": False}]
+        )
         with patch.object(client, "_request", return_value=lines):
             with self.assertRaises(OllamaError):
                 drain(client._stream_chat({}))
@@ -158,7 +160,7 @@ class TestStreamChat(unittest.TestCase):
         client = make_client()
         lines = stream_lines(
             [
-                {"message": "not a dict"},
+                {"message": "not a dict", "done": False},
                 {"message": {"role": "assistant", "content": "ok"}, "done": True},
             ]
         )
@@ -167,6 +169,13 @@ class TestStreamChat(unittest.TestCase):
 
         self.assertEqual(yielded, ["ok"])
         self.assertEqual(result["message"]["content"], "ok")
+
+    def test_missing_done_field_raises(self):
+        client = make_client()
+        lines = stream_lines([{"message": {"role": "assistant", "content": "hi"}}])
+        with patch.object(client, "_request", return_value=lines):
+            with self.assertRaises(OllamaError):
+                drain(client._stream_chat({}))
 
 
 class TestRequestRetry(unittest.TestCase):
