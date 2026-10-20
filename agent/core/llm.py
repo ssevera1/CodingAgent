@@ -223,6 +223,11 @@ class LLMClient:
                     continue
                 try:
                     chunk = json.loads(line)
+                    if "done" not in chunk:
+                        raise OllamaError(
+                            f"Malformed streaming response: missing required 'done' field. "
+                            f"Got: {chunk}"
+                        )
                     if "message" in chunk:
                         message = chunk["message"]
                         if isinstance(message, dict):
