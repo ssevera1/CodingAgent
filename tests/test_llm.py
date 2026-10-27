@@ -88,14 +88,22 @@ class TestValidateMessageStructure(unittest.TestCase):
             "message": {
                 "role": "assistant",
                 "tool_calls": [{"function": {"name": "read_file", "arguments": {}}}],
-            }
+            },
+            "done": True,
         }
         with patch.object(client, "_request", return_value=response):
             self.assertEqual(client.chat([{"role": "user", "content": "hi"}]), response)
 
     def test_chat_rejects_non_dict_message(self):
         client = make_client()
-        with patch.object(client, "_request", return_value={"message": None}):
+        with patch.object(client, "_request", return_value={"message": None, "done": True}):
+            with self.assertRaises(OllamaError):
+                client.chat([{"role": "user", "content": "hi"}])
+
+    def test_chat_rejects_response_missing_done(self):
+        client = make_client()
+        response = {"message": {"role": "assistant", "content": "hi"}}
+        with patch.object(client, "_request", return_value=response):
             with self.assertRaises(OllamaError):
                 client.chat([{"role": "user", "content": "hi"}])
 
