@@ -204,6 +204,7 @@ class LLMClient:
             return self._stream_chat(data, timeout=timeout)
 
         result = self._request("/api/chat", data, timeout=timeout)
+        self._validate_response(result, ["done"])
         self._validate_message_structure(result)
         return result
 
