@@ -224,26 +224,25 @@ class LLMClient:
                     continue
                 try:
                     chunk = json.loads(line)
-                    if "done" not in chunk:
+                    if "done" not in chunk or "message" not in chunk:
                         raise OllamaError(
-                            f"Malformed streaming response: missing required 'done' field. "
+                            f"Malformed streaming response: missing required 'message' or 'done' field. "
                             f"Got: {chunk}"
                         )
-                    if "message" in chunk:
-                        message = chunk["message"]
-                        if isinstance(message, dict):
-                            content = message.get("content")
-                            if content is not None and not isinstance(content, str):
-                                raise OllamaError(
-                                    f"Expected 'content' to be a str, got "
-                                    f"{type(content).__name__}: {chunk}"
-                                )
-                            if content:
-                                full_response["message"]["content"] += content
-                                yield content
-                            # Tool calls can arrive in a chunk without content.
-                            if "tool_calls" in message:
-                                full_response["message"]["tool_calls"] = message["tool_calls"]
+                    message = chunk["message"]
+                    if isinstance(message, dict):
+                        content = message.get("content")
+                        if content is not None and not isinstance(content, str):
+                            raise OllamaError(
+                                f"Expected 'content' to be a str, got "
+                                f"{type(content).__name__}: {chunk}"
+                            )
+                        if content:
+                            full_response["message"]["content"] += content
+                            yield content
+                        # Tool calls can arrive in a chunk without content.
+                        if "tool_calls" in message:
+                            full_response["message"]["tool_calls"] = message["tool_calls"]
                     if chunk.get("done", False):
                         break
                 except json.JSONDecodeError:
